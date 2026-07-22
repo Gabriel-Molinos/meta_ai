@@ -82,7 +82,7 @@ class Account
                 av_timeout        = :av_timeout,
                 nicho             = :nicho,
                 active            = :active,
-                updated_at        = datetime(\'now\')
+                updated_at        = NOW()
              WHERE account_key = :account_key'
         );
 

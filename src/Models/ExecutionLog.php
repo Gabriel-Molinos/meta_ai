@@ -19,7 +19,7 @@ class ExecutionLog
     public function complete(int $id, int $campaignsCount): void
     {
         Connection::execute(
-            "UPDATE executions SET status = 'completed', campaigns_count = ?, completed_at = datetime('now') WHERE id = ?",
+            "UPDATE executions SET status = 'completed', campaigns_count = ?, completed_at = NOW() WHERE id = ?",
             [$campaignsCount, $id]
         );
     }
@@ -27,7 +27,7 @@ class ExecutionLog
     public function fail(int $id, string $errorMessage): void
     {
         Connection::execute(
-            "UPDATE executions SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?",
+            "UPDATE executions SET status = 'failed', error_message = ?, completed_at = NOW() WHERE id = ?",
             [$errorMessage, $id]
         );
     }

@@ -17,7 +17,7 @@ class CampaignReport
 
         $pdo = Connection::getInstance();
 
-        $sql = 'INSERT OR REPLACE INTO campaign_reports
+        $sql = 'INSERT INTO campaign_reports
                     (execution_id, report_date, campaign_id, account_key, domain,
                      campaign_name, status, impressions, clicks, reach,
                      spend_usd, ctr, cpc_usd, cpm_usd, roas,
@@ -26,7 +26,23 @@ class CampaignReport
                     (:execution_id, :report_date, :campaign_id, :account_key, :domain,
                      :campaign_name, :status, :impressions, :clicks, :reach,
                      :spend_usd, :ctr, :cpc_usd, :cpm_usd, :roas,
-                     :av_revenue_usd, :av_impressions, :av_sessions)';
+                     :av_revenue_usd, :av_impressions, :av_sessions)
+                ON DUPLICATE KEY UPDATE
+                    execution_id   = VALUES(execution_id),
+                    domain         = VALUES(domain),
+                    campaign_name  = VALUES(campaign_name),
+                    status         = VALUES(status),
+                    impressions    = VALUES(impressions),
+                    clicks         = VALUES(clicks),
+                    reach          = VALUES(reach),
+                    spend_usd      = VALUES(spend_usd),
+                    ctr            = VALUES(ctr),
+                    cpc_usd        = VALUES(cpc_usd),
+                    cpm_usd        = VALUES(cpm_usd),
+                    roas           = VALUES(roas),
+                    av_revenue_usd = VALUES(av_revenue_usd),
+                    av_impressions = VALUES(av_impressions),
+                    av_sessions    = VALUES(av_sessions)';
 
         $stmt = $pdo->prepare($sql);
 
@@ -106,6 +122,8 @@ class CampaignReport
 
     public function getOverviewMetrics(string $accountKey, int $days = 30): array
     {
+        $cutoff = date('Y-m-d', strtotime("-{$days} days"));
+
         $stmt = Connection::getInstance()->prepare(
             "SELECT
                 COUNT(DISTINCT campaign_id)  AS campaigns,
@@ -117,17 +135,19 @@ class CampaignReport
                 ROUND(SUM(av_revenue_usd) / NULLIF(SUM(spend_usd), 0), 4) AS roas
              FROM campaign_reports
              WHERE account_key = :account_key
-               AND report_date >= date('now', :days)"
+               AND report_date >= :cutoff"
         );
         $stmt->execute([
             ':account_key' => $accountKey,
-            ':days'        => "-{$days} days",
+            ':cutoff'      => $cutoff,
         ]);
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
     }
 
     public function getTopByRoas(int $days = 30, int $limit = 20): array
     {
+        $cutoff = date('Y-m-d', strtotime("-{$days} days"));
+
         $stmt = Connection::getInstance()->prepare(
             "SELECT
                 campaign_id,
@@ -140,30 +160,32 @@ class CampaignReport
                 SUM(av_sessions)   AS av_sessions,
                 ROUND(SUM(av_revenue_usd) / NULLIF(SUM(spend_usd), 0), 4) AS roas
              FROM campaign_reports
-             WHERE report_date >= date('now', :days)
+             WHERE report_date >= :cutoff
                AND spend_usd > 0
              GROUP BY campaign_id, campaign_name, account_key
              HAVING roas > 0
              ORDER BY roas DESC
              LIMIT :limit"
         );
-        $stmt->bindValue(':days',  "-{$days} days");
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':cutoff', $cutoff);
+        $stmt->bindValue(':limit',  $limit, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function getMissingDates(string $accountKey, int $lookbackDays): array
     {
+        $cutoff = date('Y-m-d', strtotime("-{$lookbackDays} days"));
+
         $existing = [];
         $stmt = Connection::getInstance()->prepare(
             "SELECT DISTINCT report_date FROM campaign_reports
              WHERE account_key = :account_key
-               AND report_date >= date('now', :days)"
+               AND report_date >= :cutoff"
         );
         $stmt->execute([
             ':account_key' => $accountKey,
-            ':days'        => "-{$lookbackDays} days",
+            ':cutoff'      => $cutoff,
         ]);
         foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $d) {
             $existing[$d] = true;

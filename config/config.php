@@ -55,7 +55,12 @@ return [
     ],
 
     'database' => [
-        'path' => __DIR__ . '/../database/meta.sqlite',
+        'host'     => $env('DB_HOST', '127.0.0.1'),
+        'port'     => (int) $env('DB_PORT', '3306'),
+        'dbname'   => $env('DB_NAME', 'meta_ai'),
+        'username' => $env('DB_USER', 'root'),
+        'password' => $env('DB_PASS', ''),
+        'ssl_ca'   => $env('DB_SSL_CA', ''),
     ],
 
     'retry' => [

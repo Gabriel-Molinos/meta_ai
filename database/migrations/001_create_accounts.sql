@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS accounts (
+    id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    account_key       VARCHAR(191) NOT NULL,
+    label             VARCHAR(255) NOT NULL,
+    meta_app_id       VARCHAR(255) NOT NULL DEFAULT '',
+    meta_app_secret   TEXT         NOT NULL,
+    meta_access_token TEXT         NOT NULL,
+    meta_account_id   VARCHAR(255) NOT NULL DEFAULT '',
+    av_base_url       VARCHAR(255) NOT NULL DEFAULT 'https://external-api.activeview.app',
+    av_api_key        TEXT         NOT NULL,
+    av_network_code   VARCHAR(255) NOT NULL DEFAULT '',
+    av_domain         VARCHAR(255) NOT NULL DEFAULT '',
+    av_timeout        INT          NOT NULL DEFAULT 30,
+    nicho             VARCHAR(255),
+    active            TINYINT(1)   NOT NULL DEFAULT 1,
+    created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_account_key (account_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

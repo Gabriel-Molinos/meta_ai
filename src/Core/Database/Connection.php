@@ -9,8 +9,8 @@ use PDOStatement;
 
 class Connection
 {
-    private static ?PDO   $instance = null;
-    private static array  $config   = [];
+    private static ?PDO  $instance = null;
+    private static array $config   = [];
 
     public static function configure(array $config): void
     {
@@ -20,21 +20,25 @@ class Connection
     public static function getInstance(): PDO
     {
         if (self::$instance === null) {
-            $path = self::$config['path'];
+            $c = self::$config;
 
-            $dir = dirname($path);
-            if (!is_dir($dir)) {
-                mkdir($dir, 0755, true);
+            $dsn = sprintf(
+                'mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                $c['host'], $c['port'], $c['dbname']
+            );
+
+            $options = [
+                PDO::ATTR_ERRMODE              => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE   => PDO::FETCH_ASSOC,
+                PDO::MYSQL_ATTR_INIT_COMMAND   => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
+                PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
+            ];
+
+            if (!empty($c['ssl_ca'])) {
+                $options[PDO::MYSQL_ATTR_SSL_CA] = $c['ssl_ca'];
             }
 
-            $dsn = 'sqlite:' . $path;
-
-            self::$instance = new PDO($dsn, null, null, [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            ]);
-
-            self::$instance->exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
+            self::$instance = new PDO($dsn, $c['username'], $c['password'], $options);
         }
 
         return self::$instance;

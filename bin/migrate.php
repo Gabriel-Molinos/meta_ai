@@ -18,8 +18,15 @@ foreach ($migrations as $file) {
     $sql  = file_get_contents($file);
     $name = basename($file);
 
+    $statements = array_filter(
+        array_map('trim', explode(';', $sql)),
+        fn($s) => $s !== ''
+    );
+
     try {
-        $pdo->exec($sql);
+        foreach ($statements as $statement) {
+            $pdo->exec($statement);
+        }
         echo "[OK] {$name}\n";
     } catch (PDOException $e) {
         echo "[ERRO] {$name}: " . $e->getMessage() . "\n";
