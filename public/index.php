@@ -32,7 +32,11 @@ use App\Core\HttpClient\HttpClient;
 use App\Middleware\AuthMiddleware;
 use App\Models\Account;
 use App\Models\CampaignReport;
+use App\Models\WordPressSite;
+use App\Models\WordPressTemplate;
+use App\Services\AI\CreativeGenerationService;
 use App\Services\AI\GeminiService;
+use App\Services\WordPress\WordPressService;
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 Connection::configure($config['database']);
@@ -42,9 +46,13 @@ $http   = new HttpClient($config['retry'], $config['curl'] ?? []);
 $enc    = new Encryptor($config['encryption_key']);
 $auth   = new AuthMiddleware($config['api_key']);
 
-$accountModel = new Account($enc);
-$reportModel  = new CampaignReport();
-$gemini       = new GeminiService($config['gemini'], $http);
+$accountModel   = new Account($enc);
+$reportModel    = new CampaignReport();
+$gemini         = new GeminiService($config['gemini'], $http);
+$wpSiteModel    = new WordPressSite($enc);
+$wpTplModel     = new WordPressTemplate();
+$wpService      = new WordPressService();
+$creativeGen    = new CreativeGenerationService($config['gemini']['api_key'], $http);
 
 // ── Controladores ─────────────────────────────────────────────────────────────
 $accountCtrl   = new AccountController($accountModel, $auth);
@@ -74,6 +82,144 @@ $router->addRoute('POST', '/api/generator/create',            [$generatorCtrl, '
 $router->addRoute('POST', '/api/auth/login', [$authCtrl, 'login']);
 $router->addRoute('GET',  '/logout',         [$authCtrl, 'logout']);
 
+// API — WordPress Sites
+$router->addRoute('GET',    '/api/wordpress/sites',     function() use ($auth, $wpSiteModel) {
+    $auth->handle(Request::fromGlobals());
+    Response::json(['status' => 'success', 'data' => $wpSiteModel->all()]);
+});
+$router->addRoute('POST',   '/api/wordpress/sites',     function() use ($auth, $wpSiteModel) {
+    $auth->handle(Request::fromGlobals());
+    $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    if (empty($data['label']) || empty($data['url']) || empty($data['wp_username']) || empty($data['wp_app_password'])) {
+        Response::error('label, url, wp_username e wp_app_password são obrigatórios', 422);
+        return;
+    }
+    $id = $wpSiteModel->create($data);
+    Response::json(['status' => 'success', 'id' => $id], 201);
+});
+$router->addRoute('PUT',    '/api/wordpress/sites/{id}', function($req, array $params) use ($auth, $wpSiteModel) {
+    $auth->handle(Request::fromGlobals());
+    $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    $wpSiteModel->update((int) $params['id'], $data);
+    Response::json(['status' => 'success']);
+});
+$router->addRoute('DELETE', '/api/wordpress/sites/{id}', function($req, array $params) use ($auth, $wpSiteModel) {
+    $auth->handle(Request::fromGlobals());
+    $wpSiteModel->delete((int) $params['id']);
+    Response::json(['status' => 'success']);
+});
+
+// API — WordPress Templates
+$router->addRoute('GET',  '/api/wordpress/templates',     function() use ($auth, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    Response::json($wpTplModel->findAll());
+});
+$router->addRoute('GET',  '/api/wordpress/templates/{id}', function($req, array $params) use ($auth, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    $tpl = $wpTplModel->find((int) $params['id']);
+    if (!$tpl) { Response::error('Template não encontrado', 404); return; }
+    Response::json($tpl);
+});
+$router->addRoute('POST', '/api/wordpress/templates',     function() use ($auth, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    if (empty($data['name'])) { Response::error('name é obrigatório', 422); return; }
+    $id = $wpTplModel->create($data);
+    Response::json(['status' => 'success', 'id' => $id], 201);
+});
+$router->addRoute('PUT',  '/api/wordpress/templates/{id}', function($req, array $params) use ($auth, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    $updated = $wpTplModel->update((int) $params['id'], $data);
+    if (!$updated) { Response::error('Template não encontrado ou é de sistema', 404); return; }
+    Response::json(['status' => 'success']);
+});
+$router->addRoute('DELETE', '/api/wordpress/templates/{id}', function($req, array $params) use ($auth, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    $deleted = $wpTplModel->delete((int) $params['id']);
+    if (!$deleted) { Response::error('Template não encontrado ou é de sistema', 404); return; }
+    Response::json(['status' => 'success']);
+});
+$router->addRoute('POST', '/api/wordpress/templates/generate-from-url', function() use ($auth, $gemini) {
+    $auth->handle(Request::fromGlobals());
+    $data = json_decode(file_get_contents('php://input'), true) ?? [];
+    if (empty($data['url'])) { Response::error('url é obrigatório', 422); return; }
+    $html = $gemini->extractTemplateFromUrl($data['url']);
+    Response::json(['status' => 'success', 'html' => $html]);
+});
+
+// API — WordPress Generate + Publish
+$router->addRoute('POST', '/api/wordpress/generate', function() use ($auth, $gemini, $wpTplModel) {
+    $auth->handle(Request::fromGlobals());
+    $data      = json_decode(file_get_contents('php://input'), true) ?? [];
+    $topic     = trim($data['topic'] ?? '');
+    $language  = trim($data['language'] ?? 'English');
+    $wordCount = max(200, min(5000, (int) ($data['word_count'] ?? 1000)));
+    $buttons   = (array) ($data['buttons'] ?? []);
+    $inclHeader = (bool) ($data['include_header_buttons'] ?? true);
+    $inclText   = (bool) ($data['include_text_before_buttons'] ?? true);
+    $components = (array) ($data['components'] ?? []);
+    $templateId = (int) ($data['template_id'] ?? 0);
+
+    if ($topic === '') { Response::error('topic é obrigatório', 422); return; }
+
+    $htmlTemplate = null;
+    if ($templateId > 0) {
+        $tpl = $wpTplModel->find($templateId);
+        if ($tpl && !empty($tpl['html'])) {
+            $htmlTemplate = $tpl['html'];
+        }
+    }
+
+    $html = $gemini->generateBlogContent($topic, $language, $wordCount, $buttons, $inclHeader, $inclText, $components, $htmlTemplate);
+    Response::json(['status' => 'success', 'html' => $html]);
+});
+
+$router->addRoute('POST', '/api/wordpress/generate-featured-image', function() use ($auth, $creativeGen) {
+    $auth->handle(Request::fromGlobals());
+    $data  = json_decode(file_get_contents('php://input'), true) ?? [];
+    $topic = trim($data['topic'] ?? '');
+    $title = trim($data['title'] ?? '');
+    if ($topic === '' && $title === '') { Response::error('topic ou title é obrigatório', 422); return; }
+    $result = $creativeGen->generateFeaturedImage($topic ?: $title, $title);
+    Response::json(['status' => 'success', 'data' => $result['data'], 'mime_type' => $result['mimeType']]);
+});
+
+$router->addRoute('POST', '/api/wordpress/pages', function() use ($auth, $wpSiteModel, $wpService) {
+    $auth->handle(Request::fromGlobals());
+    $data    = json_decode(file_get_contents('php://input'), true) ?? [];
+    $siteId  = (int) ($data['site_id'] ?? 0);
+    $title   = trim($data['title'] ?? '');
+    $html    = trim($data['html_content'] ?? '');
+    $status  = in_array($data['status'] ?? '', ['publish', 'draft', 'private'], true) ? $data['status'] : 'publish';
+    $type    = in_array($data['post_type'] ?? '', ['post', 'page'], true) ? $data['post_type'] : 'post';
+
+    if (!$siteId || $title === '' || $html === '') {
+        Response::error('site_id, title e html_content são obrigatórios', 422);
+        return;
+    }
+
+    $siteRow = $wpSiteModel->find($siteId);
+    if (!$siteRow) { Response::error('Site não encontrado', 404); return; }
+    $site = $wpSiteModel->toConfig($siteRow);
+
+    $featuredMediaId = 0;
+    if (!empty($data['featured_image_b64'])) {
+        try {
+            $featuredMediaId = $wpService->uploadMedia(
+                $site['url'], $site['wp_username'], $site['wp_app_password'],
+                $data['featured_image_b64'], $data['featured_image_mime'] ?? 'image/png'
+            );
+        } catch (\Throwable) {}
+    }
+
+    $result = $wpService->createPage(
+        $site['url'], $site['wp_username'], $site['wp_app_password'],
+        $title, $html, $status, $type, $featuredMediaId
+    );
+    Response::json(['status' => 'success', 'data' => $result]);
+});
+
 // ── Web — Verificação de autenticação ─────────────────────────────────────────
 $uri     = $request->getUri();
 $isApi   = str_starts_with($uri, '/api/') || $uri === '/logout';
@@ -84,10 +230,11 @@ if (!$isApi && !$isLogin) {
 }
 
 // ── Rotas Web (Views) ─────────────────────────────────────────────────────────
-$router->addRoute('GET', '/',          fn() => header('Location: /generator') ?: exit);
-$router->addRoute('GET', '/login',     fn() => require __DIR__ . '/views/login.php');
-$router->addRoute('GET', '/accounts',  fn() => require __DIR__ . '/views/accounts.php');
-$router->addRoute('GET', '/generator', fn() => require __DIR__ . '/views/generator.php');
+$router->addRoute('GET', '/',                  fn() => header('Location: /generator') ?: exit);
+$router->addRoute('GET', '/login',             fn() => require __DIR__ . '/views/login.php');
+$router->addRoute('GET', '/accounts',          fn() => require __DIR__ . '/views/accounts.php');
+$router->addRoute('GET', '/generator',         fn() => require __DIR__ . '/views/generator.php');
+$router->addRoute('GET', '/wordpress/pages',   fn() => require __DIR__ . '/views/wordpress/pages.php');
 
 $router->dispatch($request);
 
