@@ -1,0 +1,28 @@
+# Ambiente e segredos
+.env
+
+# Banco de dados
+database/*.sqlite
+database/*.db
+
+# Dependências PHP
+vendor/
+
+# Arquivos de mídia e teste
+*.mp4
+*.mov
+*.avi
+test_ad.*
+teste.php
+
+# Ferramentas internas
+.claude/
+.playwright-mcp/
+
+# Sistema operacional
+Thumbs.db
+.DS_Store
+
+# Logs e cache
+*.log
+storage/logs/
