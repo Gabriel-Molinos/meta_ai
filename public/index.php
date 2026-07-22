@@ -63,14 +63,6 @@ $router->addRoute('POST',   '/api/accounts',          [$accountCtrl, 'store']);
 $router->addRoute('PUT',    '/api/accounts/{key}',    [$accountCtrl, 'update']);
 $router->addRoute('DELETE', '/api/accounts/{key}',    [$accountCtrl, 'destroy']);
 
-// API — Campanhas / Dashboard
-$router->addRoute('GET',  '/api/campaigns',  [$campaignCtrl, 'index']);
-$router->addRoute('GET',  '/api/dashboard',  [$campaignCtrl, 'dashboard']);
-
-// API — IA
-$router->addRoute('POST', '/api/ai/analyze', [$aiCtrl, 'analyze']);
-$router->addRoute('POST', '/api/ai/trend',   [$aiCtrl, 'trend']);
-
 // API — Gerador de campanhas
 $router->addRoute('GET',  '/api/generator/pixels',            [$generatorCtrl, 'pixels']);
 $router->addRoute('GET',  '/api/generator/events',            [$generatorCtrl, 'events']);
@@ -92,13 +84,10 @@ if (!$isApi && !$isLogin) {
 }
 
 // ── Rotas Web (Views) ─────────────────────────────────────────────────────────
-$router->addRoute('GET', '/',           fn() => header('Location: /dashboard') ?: exit);
-$router->addRoute('GET', '/login',      fn() => require __DIR__ . '/views/login.php');
-$router->addRoute('GET', '/dashboard',  fn() => require __DIR__ . '/views/dashboard.php');
-$router->addRoute('GET', '/campaigns',  fn() => require __DIR__ . '/views/campaigns.php');
-$router->addRoute('GET', '/accounts',   fn() => require __DIR__ . '/views/accounts.php');
-$router->addRoute('GET', '/ia',         fn() => require __DIR__ . '/views/ia/analysis.php');
-$router->addRoute('GET', '/generator',  fn() => require __DIR__ . '/views/generator.php');
+$router->addRoute('GET', '/',          fn() => header('Location: /generator') ?: exit);
+$router->addRoute('GET', '/login',     fn() => require __DIR__ . '/views/login.php');
+$router->addRoute('GET', '/accounts',  fn() => require __DIR__ . '/views/accounts.php');
+$router->addRoute('GET', '/generator', fn() => require __DIR__ . '/views/generator.php');
 
 $router->dispatch($request);
 

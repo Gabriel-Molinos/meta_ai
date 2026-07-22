@@ -3,12 +3,9 @@ $pageTitle   = $pageTitle   ?? 'Meta Ads Dashboard';
 $pageContent = $pageContent ?? '';
 $pageScripts = $pageScripts ?? '';
 
-$uri           = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
-$isDashboard   = $uri === '/' || str_starts_with($uri, '/dashboard');
-$isCampaigns   = str_starts_with($uri, '/campaigns');
-$isAccounts    = str_starts_with($uri, '/accounts');
-$isIA          = str_starts_with($uri, '/ia');
-$isGenerator   = str_starts_with($uri, '/generator');
+$uri         = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+$isAccounts  = str_starts_with($uri, '/accounts');
+$isGenerator = str_starts_with($uri, '/generator');
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR" data-theme="light">
@@ -81,23 +78,11 @@ $isGenerator   = str_starts_with($uri, '/generator');
         </div>
       </div>
       <nav class="flex-1 p-3 space-y-1">
-        <a href="/dashboard"  class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isDashboard ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-          Dashboard
-        </a>
-        <a href="/campaigns"  class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isCampaigns ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-          Campanhas
-        </a>
-        <a href="/accounts"   class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isAccounts ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
+        <a href="/accounts"  class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isAccounts ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
           Contas
         </a>
-        <a href="/ia"         class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isIA ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-          Análise IA
-        </a>
-        <a href="/generator"  class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isGenerator ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
+        <a href="/generator" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isGenerator ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Gerador de Campanhas
         </a>
