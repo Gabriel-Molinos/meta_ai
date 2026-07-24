@@ -246,10 +246,12 @@ function renderReview(d){
             <div class="opacity-50 text-xs mb-1">URL de destino</div>
             <div class="break-all text-xs">${esc(p.destination_url||'—')}</div>
           </div>
-          ${urlTagsList.length?`<div class="bg-base-200 p-3 rounded-lg col-span-2">
+          <div class="bg-base-200 p-3 rounded-lg col-span-2">
             <div class="opacity-50 text-xs mb-1">Parâmetros de URL (url_tags)</div>
-            ${urlTagsList.map(t=>`<div class="font-mono text-xs break-all">${esc(t)}</div>`).join('')}
-          </div>`:''}
+            ${urlTagsList.length
+              ? urlTagsList.map(t=>`<div class="font-mono text-xs break-all">${esc(t)}</div>`).join('')
+              : '<span class="opacity-40 text-xs">—</span>'}
+          </div>
         </div>
       </div>
 
