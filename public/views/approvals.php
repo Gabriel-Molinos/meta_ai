@@ -115,8 +115,47 @@ function renderReview(d){
       </div>`;
   });
 
-  const countries = (p.countries||[]).join(', ');
-  const platforms = (p.publisher_platforms||[]).join(', ');
+  const LOCALE_MAP = {
+    '16':'Português (Brasil)','31':'Português (Portugal)','6':'English (US)',
+    '24':'English (UK)','7':'Español (España)','23':'Español (todos)',
+    '9':'Français (France)','44':'Français (Canadá)','5':'Deutsch','10':'Italiano',
+    '11':'日本語','20':'中文(简体)','21':'中文(繁體 HK)','22':'中文(繁體 TW)',
+    '28':'العربية','14':'Nederlands','17':'Русский','18':'Svenska',
+    '13':'Norsk','4':'Dansk','15':'Polski','2':'Čeština',
+    '32':'Română','30':'Magyar','39':'Ελληνικά','8':'Suomi',
+    '19':'Türkçe','12':'한국어','25':'Bahasa Indonesia',
+  };
+
+  const PLATFORM_LABEL = {
+    facebook:'Facebook', instagram:'Instagram', messenger:'Messenger',
+    audience_network:'Audience Network', threads:'Threads',
+  };
+  const POSITION_LABEL = {
+    feed:'Feed', facebook_reels:'Facebook Reels', story:'Stories',
+    marketplace:'Marketplace', video_feeds:'Video Feeds',
+    right_hand_column:'Coluna Direita', search:'Pesquisa', instream_video:'In-stream Vídeo',
+    stream:'Feed IG', reels:'Reels IG', explore:'Explorar', explore_home:'Explorar Home',
+    profile_feed:'Perfil IG', sponsored_messages:'Mensagens Patrocinadas',
+  };
+
+  const countries  = (p.countries||[]).join(', ');
+  const localeNames = (p.locales||[]).map(l => LOCALE_MAP[l]||l).join(', ') || '— (todos)';
+  const advantage  = p.advantage_audience ? '✅ Habilitado' : '❌ Desabilitado';
+
+  // Monta bloco de posicionamentos por plataforma
+  const placementRows = (p.publisher_platforms||[]).map(plat => {
+    const posKey = plat === 'facebook' ? 'facebook_positions'
+                 : plat === 'instagram' ? 'instagram_positions'
+                 : plat === 'messenger' ? 'messenger_positions' : null;
+    const positions = posKey ? (p[posKey]||[]).map(pos => POSITION_LABEL[pos]||pos).join(', ') : '—';
+    return `<div class="flex items-start gap-2 text-xs py-1 border-b border-base-300 last:border-0">
+      <span class="font-medium w-24 shrink-0">${PLATFORM_LABEL[plat]||plat}</span>
+      <span class="opacity-70">${positions || '—'}</span>
+    </div>`;
+  }).join('');
+
+  // Coleta url_tags de todos os anúncios (mostra os distintos)
+  const urlTagsList = [...new Set((p.ads||[]).map(a=>a.url_tags||'').filter(Boolean))];
 
   document.getElementById('reviewContent').innerHTML = `
     <div class="space-y-4">
@@ -129,57 +168,100 @@ function renderReview(d){
       </div>
 
       ${d.status==='rejected'&&d.rejection_reason?`
-      <div class="alert alert-error alert-sm">
-        <div>
-          <div class="font-semibold text-sm">Motivo anterior da rejeição:</div>
-          <div class="text-sm">${esc(d.rejection_reason)}</div>
-          ${(d.rejected_fields||[]).length?`<div class="text-xs mt-1">Campos: ${(d.rejected_fields||[]).map(f=>esc(REJECTED_FIELD_LABELS[f]||f)).join(', ')}</div>`:''}
+      <div class="alert alert-error text-sm">
+        <div class="w-full">
+          <div class="font-semibold">Motivo anterior da rejeição:</div>
+          <div class="mt-0.5">${esc(d.rejection_reason)}</div>
+          ${(d.rejected_fields||[]).length?`<div class="text-xs mt-1 opacity-80">Campos: ${(d.rejected_fields||[]).map(f=>esc(REJECTED_FIELD_LABELS[f]||f)).join(', ')}</div>`:''}
         </div>
       </div>`:''}
 
-      <div class="grid grid-cols-2 gap-3 text-sm">
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Objetivo</div>
-          <div>${esc(OBJECTIVE_LABELS[p.objective]||p.objective)}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Orçamento diário</div>
-          <div>R$ ${esc(p.daily_budget||'')}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Países</div>
-          <div>${esc(countries)}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Plataformas</div>
-          <div>${esc(platforms)}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Idade</div>
-          <div>${esc(p.age_min||18)} – ${esc(p.age_max||65)} anos</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Início</div>
-          <div>${esc(p.start_time||'')}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg col-span-2">
-          <div class="opacity-50 text-xs mb-1">URL de destino</div>
-          <div class="truncate">${esc(p.destination_url||'')}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Pixel</div>
-          <div>${esc(p.pixel_id||'—')}</div>
-        </div>
-        <div class="bg-base-200 p-3 rounded-lg">
-          <div class="opacity-50 text-xs mb-1">Evento</div>
-          <div>${esc(p.pixel_event||p.custom_conversion_id||'—')}</div>
+      <!-- Campanha -->
+      <div>
+        <div class="text-xs font-semibold uppercase opacity-40 mb-2 tracking-wide">Campanha</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Objetivo</div>
+            <div>${esc(OBJECTIVE_LABELS[p.objective]||p.objective)}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Orçamento diário</div>
+            <div>R$ ${esc(p.daily_budget||'')}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Início</div>
+            <div>${esc(p.start_time||'—')}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Status inicial</div>
+            <div>${esc(p.campaign_status||'PAUSED')}</div>
+          </div>
         </div>
       </div>
 
-      ${creativePreviews?`<div><div class="font-semibold text-sm mb-2">Criativos</div><div class="grid grid-cols-1 gap-3">${creativePreviews}</div></div>`:''}
+      <!-- Segmentação -->
+      <div>
+        <div class="text-xs font-semibold uppercase opacity-40 mb-2 tracking-wide">Segmentação</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Países</div>
+            <div>${esc(countries||'—')}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Idiomas</div>
+            <div>${esc(localeNames)}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Faixa etária</div>
+            <div>${esc(p.age_min||18)} – ${esc(p.age_max||65)} anos</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Advantage+ Audience</div>
+            <div>${advantage}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Posicionamentos -->
+      <div>
+        <div class="text-xs font-semibold uppercase opacity-40 mb-2 tracking-wide">Posicionamentos por plataforma</div>
+        <div class="bg-base-200 p-3 rounded-lg text-sm">
+          ${placementRows || '<span class="opacity-50">Nenhum selecionado</span>'}
+        </div>
+      </div>
+
+      <!-- Pixel & Conversão -->
+      <div>
+        <div class="text-xs font-semibold uppercase opacity-40 mb-2 tracking-wide">Pixel & Conversão</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Pixel ID</div>
+            <div class="font-mono text-xs">${esc(p.pixel_id||'—')}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg">
+            <div class="opacity-50 text-xs mb-1">Evento / Conversão</div>
+            <div>${esc(p.pixel_event||p.custom_conversion_id||'—')}</div>
+          </div>
+          <div class="bg-base-200 p-3 rounded-lg col-span-2">
+            <div class="opacity-50 text-xs mb-1">URL de destino</div>
+            <div class="break-all text-xs">${esc(p.destination_url||'—')}</div>
+          </div>
+          ${urlTagsList.length?`<div class="bg-base-200 p-3 rounded-lg col-span-2">
+            <div class="opacity-50 text-xs mb-1">Parâmetros de URL (url_tags)</div>
+            ${urlTagsList.map(t=>`<div class="font-mono text-xs break-all">${esc(t)}</div>`).join('')}
+          </div>`:''}
+        </div>
+      </div>
+
+      <!-- Criativos -->
+      ${creativePreviews?`
+      <div>
+        <div class="text-xs font-semibold uppercase opacity-40 mb-2 tracking-wide">Criativos</div>
+        <div class="grid grid-cols-1 gap-3">${creativePreviews}</div>
+      </div>`:''}
 
       ${d.status==='pending'?`
-      <div class="flex gap-2 pt-2">
+      <div class="flex gap-2 pt-2 sticky bottom-0 bg-base-100 pb-2">
         <button onclick="approveDraft(${d.id})" class="btn btn-success flex-1">✓ Aprovar</button>
         <button onclick="openRejectModal()" class="btn btn-error flex-1">✗ Rejeitar</button>
       </div>`:''}
