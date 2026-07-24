@@ -526,6 +526,7 @@ async function createCampaign(){
   formData.append('custom_event_str',    state.custom_event_str);
   formData.append('custom_conversion_id', state.custom_conversion_id);
   formData.append('instagram_user_id',  state.instagram_user_id);
+  formData.append('destination_url',    state.destination_url);
 
   state.countries.forEach(c=>formData.append('countries[]',c));
   state.locales.forEach(l=>formData.append('locales[]',l));
