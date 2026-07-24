@@ -9,6 +9,7 @@ $isGenerator  = str_starts_with($uri, '/generator');
 $isWordPress  = str_starts_with($uri, '/wordpress');
 $isApprovals  = str_starts_with($uri, '/approvals');
 $isMyCampaigns = str_starts_with($uri, '/my-campaigns');
+$isUsers      = str_starts_with($uri, '/users');
 $authType     = $GLOBALS['_authType'] ?? 'admin';
 $authEmail    = $GLOBALS['_authEmail'] ?? null;
 ?>
@@ -103,6 +104,10 @@ $authEmail    = $GLOBALS['_authEmail'] ?? null;
           Gerador de Páginas
         </a>
         <?php if ($authType === 'admin'): ?>
+        <a href="/users" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isUsers ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+          Usuários
+        </a>
         <a href="/approvals" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors <?= $isApprovals ? 'bg-primary text-primary-content' : 'hover:bg-base-200' ?>">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           Aprovações

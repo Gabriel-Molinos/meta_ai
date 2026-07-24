@@ -328,6 +328,7 @@ $router->addRoute('GET', '/generator',         fn() => require __DIR__ . '/views
 $router->addRoute('GET', '/wordpress/pages',   fn() => require __DIR__ . '/views/wordpress/pages.php');
 $router->addRoute('GET', '/approvals',         fn() => require __DIR__ . '/views/approvals.php');
 $router->addRoute('GET', '/my-campaigns',      fn() => require __DIR__ . '/views/my-campaigns.php');
+$router->addRoute('GET', '/users',             fn() => require __DIR__ . '/views/users.php');
 
 $router->dispatch($request);
 
