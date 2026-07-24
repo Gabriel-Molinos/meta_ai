@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS campaign_drafts (
+    id               INT UNSIGNED     NOT NULL AUTO_INCREMENT,
+    user_id          INT UNSIGNED     NOT NULL,
+    account_key      VARCHAR(255)     NOT NULL,
+    status           ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    payload          JSON             NOT NULL,
+    creatives        JSON             NULL,
+    reviewed_by      VARCHAR(255)     NULL,
+    reviewed_at      DATETIME         NULL,
+    rejection_reason TEXT             NULL,
+    rejected_fields  JSON             NULL,
+    meta_campaign_id VARCHAR(255)     NULL,
+    meta_adset_id    VARCHAR(255)     NULL,
+    meta_ads         JSON             NULL,
+    created_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_status  (status),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
