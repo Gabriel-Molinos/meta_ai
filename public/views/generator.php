@@ -1,5 +1,6 @@
 <?php
 $pageTitle = 'Gerador de Campanhas';
+$isAdmin = ($GLOBALS['_authType'] ?? 'admin') === 'admin';
 
 $pageScripts = <<<'JS'
 <script>
@@ -80,9 +81,16 @@ const state = {
   ads: [],
 };
 
+// ── Config injetado pelo PHP ───────────────────────────────────────────────────
+JS;
+$pageScripts .= "\nconst IS_ADMIN = " . ($isAdmin ? 'true' : 'false') . ";\n";
+$pageScripts .= <<<'JS'
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML; }
-function apiKey(){ return sessionStorage.getItem('apiKey')||document.getElementById('apiKeyInput')?.value||''; }
+function apiKey(){
+  return decodeURIComponent((document.cookie.match(/_auth=([^;]+)/)||[])[1]||'') || sessionStorage.getItem('apiKey') || document.getElementById('apiKeyInput')?.value || '';
+}
 async function apiFetch(url,opts={}){
   const res=await fetch(url,{...opts,headers:{'Authorization':'Bearer '+apiKey(),...(opts.headers||{})}});
   if(!res.ok) throw new Error(await res.text());
@@ -174,7 +182,7 @@ async function loadAccounts(){
   const sel=document.getElementById('s1_account');
   sel.innerHTML='<option value="">Carregando...</option>';
   try{
-    const data=await apiFetch('/api/accounts');
+    const data=await apiFetch('/api/accounts/list');
     const accounts=data.data||[];
     sel.innerHTML='<option value="">Selecione uma conta</option>'+
       accounts.map(a=>`<option value="${esc(a.account_key)}">${esc(a.label)}</option>`).join('');
@@ -494,11 +502,13 @@ function renderReview(){
   </div>`;
 }
 
-// ── Criação da campanha ────────────────────────────────────────────────────────
+// ── Criação / Submissão da campanha ───────────────────────────────────────────
 async function createCampaign(){
   const btn=document.getElementById('btnCreate');
   btn.disabled=true;
-  btn.innerHTML='<span class="loading loading-spinner loading-xs"></span> Criando...';
+  btn.innerHTML=IS_ADMIN
+    ? '<span class="loading loading-spinner loading-xs"></span> Criando...'
+    : '<span class="loading loading-spinner loading-xs"></span> Enviando...';
 
   const formData=new FormData();
   formData.append('account_key',     state.account_key);
@@ -536,46 +546,156 @@ async function createCampaign(){
     if(ad.file) formData.append(`ads_files[${i}]`, ad.file);
   });
 
+  const endpoint = IS_ADMIN ? '/api/generator/create' : '/api/generator/submit';
+
   try{
-    const res=await fetch('/api/generator/create',{
+    const res=await fetch(endpoint,{
       method:'POST',
       headers:{'Authorization':'Bearer '+apiKey()},
       body:formData,
     });
     const json=await res.json();
 
-    if(json.success){
-      document.getElementById('resultModal').classList.remove('hidden');
-      document.getElementById('resultContent').innerHTML=`
-        <div class="space-y-2 text-sm">
-          <div class="flex items-center gap-2 text-success font-bold text-base">✓ Campanha criada com sucesso!</div>
-          <div><span class="opacity-60">Campaign ID:</span> <code class="badge badge-ghost">${esc(json.campaign_id)}</code></div>
-          <div><span class="opacity-60">Ad Set ID:</span>  <code class="badge badge-ghost">${esc(json.adset_id)}</code></div>
-          <div class="mt-2 font-semibold">Anúncios:</div>
-          ${(json.ads||[]).map(a=>`
-            <div class="pl-3 border-l-2 border-success">
-              <div>${esc(a.ad_name)}</div>
-              ${a.ad_id?`<div class="opacity-60 text-xs">Ad ID: ${esc(a.ad_id)} · Creative: ${esc(a.creative_id)}</div>`:''}
-              ${a.error?`<div class="text-error text-xs">${esc(a.error)}</div>`:''}
-            </div>`).join('')}
-        </div>`;
+    if(IS_ADMIN){
+      if(json.success){
+        document.getElementById('resultModal').classList.remove('hidden');
+        document.getElementById('resultContent').innerHTML=`
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2 text-success font-bold text-base">✓ Campanha criada com sucesso!</div>
+            <div><span class="opacity-60">Campaign ID:</span> <code class="badge badge-ghost">${esc(json.campaign_id)}</code></div>
+            <div><span class="opacity-60">Ad Set ID:</span>  <code class="badge badge-ghost">${esc(json.adset_id)}</code></div>
+            <div class="mt-2 font-semibold">Anúncios:</div>
+            ${(json.ads||[]).map(a=>`
+              <div class="pl-3 border-l-2 border-success">
+                <div>${esc(a.ad_name)}</div>
+                ${a.ad_id?`<div class="opacity-60 text-xs">Ad ID: ${esc(a.ad_id)} · Creative: ${esc(a.creative_id)}</div>`:''}
+                ${a.error?`<div class="text-error text-xs">${esc(a.error)}</div>`:''}
+              </div>`).join('')}
+          </div>`;
+      } else {
+        alert('Erro ao criar campanha:\n'+(json.error||'Erro desconhecido'));
+      }
     } else {
-      alert('Erro ao criar campanha:\n'+(json.error||'Erro desconhecido'));
+      if(json.status==='success'){
+        document.getElementById('resultModal').classList.remove('hidden');
+        document.getElementById('resultContent').innerHTML=`
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center gap-2 text-success font-bold text-base">✓ Campanha enviada para aprovação!</div>
+            <div class="opacity-70">Sua campanha foi enviada para revisão. Acompanhe o status em <a href="/my-campaigns" class="link link-primary">Minhas Campanhas</a>.</div>
+          </div>`;
+      } else {
+        alert('Erro ao enviar campanha:\n'+(json.error||'Erro desconhecido'));
+      }
     }
   } catch(e){
     alert('Erro de rede:\n'+e.message);
   } finally {
     btn.disabled=false;
-    btn.innerHTML='🚀 Criar Campanha';
+    btn.innerHTML=IS_ADMIN ? '🚀 Criar Campanha' : '📤 Enviar para Aprovação';
+  }
+}
+
+// ── Pré-preenchimento de draft rejeitado ──────────────────────────────────────
+async function loadDraft(id){
+  try{
+    const data = await apiFetch('/api/my-campaigns/'+id);
+    const draft = data.data;
+    if(!draft) return;
+    const p = draft.payload || {};
+    const rejectedFields = draft.rejected_fields || [];
+
+    // Aguarda contas carregarem
+    await new Promise(r => setTimeout(r, 800));
+
+    // Step 1
+    const accSel = document.getElementById('s1_account');
+    if(p.account_key) accSel.value = p.account_key;
+    if(p.campaign_name) document.getElementById('s1_name').value = p.campaign_name;
+    if(p.objective){
+      const radio = document.querySelector(`input[name="objective"][value="${p.objective}"]`);
+      if(radio) radio.checked = true;
+    }
+    if(p.campaign_status){
+      document.getElementById('s1_status').checked = p.campaign_status === 'ACTIVE';
+    }
+    state.account_key = p.account_key || '';
+
+    // Step 2
+    if(p.countries) document.querySelectorAll('.chk-country').forEach(c=>{c.checked=p.countries.includes(c.value);});
+    if(p.locales) document.querySelectorAll('.chk-locale').forEach(c=>{c.checked=p.locales.includes(c.value);});
+    if(p.daily_budget) document.getElementById('s2_budget').value = p.daily_budget;
+    if(p.start_time) document.getElementById('s2_start').value = p.start_time;
+    if(p.age_min) document.getElementById('s2_age_min').value = p.age_min;
+    if(p.age_max) document.getElementById('s2_age_max').value = p.age_max;
+    document.getElementById('s2_advantage').checked = p.advantage_audience != 0;
+    if(p.publisher_platforms) document.querySelectorAll('.chk-platform').forEach(c=>{c.checked=p.publisher_platforms.includes(c.value);});
+    if(p.facebook_positions) document.querySelectorAll('.chk-fb-pos').forEach(c=>{c.checked=p.facebook_positions.includes(c.value);});
+    if(p.instagram_positions) document.querySelectorAll('.chk-ig-pos').forEach(c=>{c.checked=p.instagram_positions.includes(c.value);});
+    if(p.messenger_positions) document.querySelectorAll('.chk-ms-pos').forEach(c=>{c.checked=p.messenger_positions.includes(c.value);});
+
+    // Step 3 — carrega pixel/pages depois de definir account_key
+    state.account_key = p.account_key || '';
+    if(state.account_key){
+      await loadPixelsAndPages();
+      if(p.pixel_id){ document.getElementById('s3_pixel').value=p.pixel_id; await loadEvents(); }
+      if(p.pixel_event) document.getElementById('s3_event').value=p.pixel_event;
+      if(p.custom_conversion_id) document.getElementById('s3_custom_conversion').value=p.custom_conversion_id;
+      if(p.page_id) document.getElementById('s3_page').value=p.page_id;
+    }
+    if(p.destination_url) document.getElementById('s3_url').value=p.destination_url;
+    if(p.custom_event_str) document.getElementById('s3_custom_event_str').value=p.custom_event_str;
+    if(p.instagram_user_id) document.getElementById('s3_instagram').value=p.instagram_user_id;
+
+    // Highlight rejected fields
+    const fieldHighlightMap = {
+      campaign_name:   ['s1_name'],
+      objective:       [],
+      budget:          ['s2_budget'],
+      targeting:       ['s2_age_min','s2_age_max'],
+      pixel:           ['s3_pixel','s3_event','s3_custom_conversion'],
+      creative:        [],
+      ad_copy:         [],
+      destination_url: ['s3_url'],
+      schedule:        ['s2_start'],
+    };
+    rejectedFields.forEach(f=>{
+      (fieldHighlightMap[f]||[]).forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.classList.add('input-error','border-error');
+      });
+    });
+
+    if(rejectedFields.length){
+      const banner = document.createElement('div');
+      banner.className = 'alert alert-warning mb-4';
+      banner.innerHTML = '<span>⚠️ Campos marcados em vermelho precisam de correção antes do reenvio.</span>';
+      document.querySelector('.space-y-4.max-w-4xl').prepend(banner);
+    }
+  } catch(e){
+    console.error('Erro ao carregar draft:', e);
   }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', ()=>{
+document.addEventListener('DOMContentLoaded', async ()=>{
+  // Atualiza label do botão de submit
+  const btn = document.getElementById('btnCreate');
+  if(btn && !IS_ADMIN){
+    btn.textContent = '📤 Enviar para Aprovação';
+    btn.classList.remove('btn-success');
+    btn.classList.add('btn-primary');
+  }
+
   loadAccounts();
   document.getElementById('s2_start').value=new Date().toISOString().slice(0,10);
   setStep(1);
   addAd();
+
+  // Verifica se há draft_id na URL para pré-preenchimento
+  const draftId = new URLSearchParams(location.search).get('draft_id');
+  if(draftId){
+    await loadDraft(draftId);
+  }
 });
 </script>
 JS;
