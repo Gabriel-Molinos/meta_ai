@@ -9,20 +9,22 @@ use App\Core\Http\Response;
 use App\Core\HttpClient\HttpClient;
 use App\Middleware\AuthMiddleware;
 use App\Models\Account;
+use App\Models\CampaignDraft;
 use App\Services\MetaAds\CampaignCreatorService;
 use App\Services\MetaAds\PixelService;
 
 class CampaignGeneratorController
 {
     public function __construct(
-        private readonly Account         $accountModel,
-        private readonly HttpClient      $http,
-        private readonly AuthMiddleware  $auth
+        private readonly Account        $accountModel,
+        private readonly HttpClient     $http,
+        private readonly AuthMiddleware $auth,
+        private readonly CampaignDraft  $draftModel,
     ) {}
 
     public function pixels(Request $request, array $params): never
     {
-        $this->auth->handle($request);
+        $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
         Response::json(['data' => $service->fetchPixels()]);
@@ -30,7 +32,7 @@ class CampaignGeneratorController
 
     public function events(Request $request, array $params): never
     {
-        $this->auth->handle($request);
+        $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
         Response::json(['data' => $service->fetchPixelEvents($_GET['pixel_id'] ?? '')]);
@@ -38,7 +40,7 @@ class CampaignGeneratorController
 
     public function pages(Request $request, array $params): never
     {
-        $this->auth->handle($request);
+        $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
         Response::json(['data' => $service->fetchPages()]);
@@ -46,7 +48,7 @@ class CampaignGeneratorController
 
     public function customConversions(Request $request, array $params): never
     {
-        $this->auth->handle($request);
+        $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
         Response::json(['data' => $service->fetchCustomConversions()]);
@@ -140,6 +142,169 @@ class CampaignGeneratorController
         } catch (\Throwable $e) {
             Response::json(['success' => false, 'error' => $e->getMessage()], 422);
         }
+    }
+
+    public function submit(Request $request, array $params): never
+    {
+        $ctx = $this->auth->resolveContext($request);
+        $userId = $ctx['type'] === 'user' ? $ctx['user_id'] : 0;
+
+        $accountKey     = $_POST['account_key'] ?? '';
+        $objective      = $_POST['objective']    ?? 'OUTCOME_SALES';
+        $campaignName   = $_POST['campaign_name'] ?? 'Nova Campanha';
+        $campaignStatus = in_array($_POST['campaign_status'] ?? '', ['ACTIVE', 'PAUSED'], true)
+            ? $_POST['campaign_status']
+            : 'PAUSED';
+
+        if ($accountKey === '') {
+            Response::error('account_key é obrigatório', 422);
+        }
+
+        $ads = $_POST['ads'] ?? [];
+
+        // Converte cada arquivo para base64
+        $creatives = [];
+        foreach ($ads as $i => $ad) {
+            $errCode = $_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
+            $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? '';
+            $mime    = $_FILES['ads_files']['type'][$i]     ?? 'application/octet-stream';
+            $name    = $_FILES['ads_files']['name'][$i]     ?? ('file_' . $i);
+
+            if ($errCode !== UPLOAD_ERR_OK || $tmpPath === '' || !is_file($tmpPath)) {
+                Response::error('Arquivo do anúncio ' . ($i + 1) . ' inválido ou ausente', 422);
+            }
+
+            $creatives[$i] = [
+                'index'       => $i,
+                'name'        => $name,
+                'mime_type'   => $mime,
+                'media_type'  => $ad['media_type'] ?? 'image',
+                'data_base64' => base64_encode(file_get_contents($tmpPath)),
+            ];
+        }
+
+        $payload = [
+            'account_key'          => $accountKey,
+            'campaign_name'        => $campaignName,
+            'objective'            => $objective,
+            'campaign_status'      => $campaignStatus,
+            'daily_budget'         => $_POST['daily_budget']         ?? '10',
+            'start_time'           => $_POST['start_time']           ?? date('Y-m-d'),
+            'countries'            => $_POST['countries']            ?? ['BR'],
+            'locales'              => $_POST['locales']              ?? [],
+            'age_min'              => (int) ($_POST['age_min']       ?? 18),
+            'age_max'              => (int) ($_POST['age_max']       ?? 65),
+            'advantage_audience'   => (int) ($_POST['advantage_audience'] ?? 1),
+            'publisher_platforms'  => $_POST['publisher_platforms']  ?? ['facebook', 'instagram'],
+            'facebook_positions'   => $_POST['facebook_positions']   ?? ['feed'],
+            'instagram_positions'  => $_POST['instagram_positions']  ?? ['stream'],
+            'messenger_positions'  => $_POST['messenger_positions']  ?? [],
+            'pixel_id'             => $_POST['pixel_id']             ?? '',
+            'pixel_event'          => $_POST['pixel_event']          ?? '',
+            'custom_conversion_id' => $_POST['custom_conversion_id'] ?? '',
+            'custom_event_str'     => $_POST['custom_event_str']     ?? '',
+            'page_id'              => $_POST['page_id']              ?? '',
+            'destination_url'      => $_POST['destination_url']      ?? '',
+            'instagram_user_id'    => $_POST['instagram_user_id']    ?? '',
+            'ads'                  => array_map(fn($ad) => [
+                'name'             => $ad['name']             ?? '',
+                'primary_text'     => $ad['primary_text']     ?? '',
+                'headline'         => $ad['headline']         ?? '',
+                'cta'              => $ad['cta']              ?? 'LEARN_MORE',
+                'media_type'       => $ad['media_type']       ?? 'image',
+                'link_description' => $ad['link_description'] ?? '',
+                'url_tags'         => $ad['url_tags']         ?? '',
+                'destination_url'  => $_POST['destination_url'] ?? '',
+            ], $ads),
+        ];
+
+        $draftId = $this->draftModel->create($userId, $accountKey, $payload, array_values($creatives));
+        Response::json(['status' => 'success', 'draft_id' => $draftId]);
+    }
+
+    public function resubmit(Request $request, array $params): never
+    {
+        $ctx = $this->auth->resolveContext($request);
+        $id  = (int) ($params['id'] ?? 0);
+
+        if ($ctx['type'] === 'user' && !$this->draftModel->belongsToUser($id, $ctx['user_id'])) {
+            Response::error('Não autorizado', 403);
+        }
+
+        $draft = $this->draftModel->findById($id);
+        if (!$draft) {
+            Response::error('Draft não encontrado', 404);
+        }
+
+        $ads             = $_POST['ads'] ?? [];
+        $existingCreatives = $draft['creatives'] ?? [];
+
+        // Para cada ad: usar novo arquivo se fornecido, senão manter existente
+        $creatives = [];
+        foreach ($ads as $i => $ad) {
+            $errCode = $_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
+            $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? '';
+
+            if ($errCode === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
+                $mime = $_FILES['ads_files']['type'][$i] ?? 'application/octet-stream';
+                $name = $_FILES['ads_files']['name'][$i] ?? ('file_' . $i);
+                $creatives[$i] = [
+                    'index'       => $i,
+                    'name'        => $name,
+                    'mime_type'   => $mime,
+                    'media_type'  => $ad['media_type'] ?? 'image',
+                    'data_base64' => base64_encode(file_get_contents($tmpPath)),
+                ];
+            } else {
+                // Mantém criativo existente se não foi re-enviado
+                $creatives[$i] = $existingCreatives[$i] ?? [
+                    'index'       => $i,
+                    'name'        => 'file_' . $i,
+                    'mime_type'   => 'image/jpeg',
+                    'media_type'  => $ad['media_type'] ?? 'image',
+                    'data_base64' => '',
+                ];
+            }
+        }
+
+        $accountKey = $_POST['account_key'] ?? $draft['account_key'];
+        $payload    = [
+            'account_key'          => $accountKey,
+            'campaign_name'        => $_POST['campaign_name']        ?? $draft['payload']['campaign_name'],
+            'objective'            => $_POST['objective']            ?? $draft['payload']['objective'],
+            'campaign_status'      => $_POST['campaign_status']      ?? $draft['payload']['campaign_status'],
+            'daily_budget'         => $_POST['daily_budget']         ?? $draft['payload']['daily_budget'],
+            'start_time'           => $_POST['start_time']           ?? $draft['payload']['start_time'],
+            'countries'            => $_POST['countries']            ?? $draft['payload']['countries'],
+            'locales'              => $_POST['locales']              ?? $draft['payload']['locales'],
+            'age_min'              => (int) ($_POST['age_min']       ?? $draft['payload']['age_min']),
+            'age_max'              => (int) ($_POST['age_max']       ?? $draft['payload']['age_max']),
+            'advantage_audience'   => (int) ($_POST['advantage_audience'] ?? $draft['payload']['advantage_audience']),
+            'publisher_platforms'  => $_POST['publisher_platforms']  ?? $draft['payload']['publisher_platforms'],
+            'facebook_positions'   => $_POST['facebook_positions']   ?? $draft['payload']['facebook_positions'],
+            'instagram_positions'  => $_POST['instagram_positions']  ?? $draft['payload']['instagram_positions'],
+            'messenger_positions'  => $_POST['messenger_positions']  ?? $draft['payload']['messenger_positions'],
+            'pixel_id'             => $_POST['pixel_id']             ?? $draft['payload']['pixel_id'],
+            'pixel_event'          => $_POST['pixel_event']          ?? $draft['payload']['pixel_event'],
+            'custom_conversion_id' => $_POST['custom_conversion_id'] ?? $draft['payload']['custom_conversion_id'],
+            'custom_event_str'     => $_POST['custom_event_str']     ?? $draft['payload']['custom_event_str'],
+            'page_id'              => $_POST['page_id']              ?? $draft['payload']['page_id'],
+            'destination_url'      => $_POST['destination_url']      ?? $draft['payload']['destination_url'],
+            'instagram_user_id'    => $_POST['instagram_user_id']    ?? $draft['payload']['instagram_user_id'],
+            'ads'                  => array_map(fn($ad) => [
+                'name'             => $ad['name']             ?? '',
+                'primary_text'     => $ad['primary_text']     ?? '',
+                'headline'         => $ad['headline']         ?? '',
+                'cta'              => $ad['cta']              ?? 'LEARN_MORE',
+                'media_type'       => $ad['media_type']       ?? 'image',
+                'link_description' => $ad['link_description'] ?? '',
+                'url_tags'         => $ad['url_tags']         ?? '',
+                'destination_url'  => $_POST['destination_url'] ?? $draft['payload']['destination_url'] ?? '',
+            ], $ads ?: $draft['payload']['ads']),
+        ];
+
+        $this->draftModel->resubmit($id, $payload, array_values($creatives));
+        Response::json(['status' => 'success', 'draft_id' => $id]);
     }
 
     private function validateAdFiles(array $ads): void
