@@ -56,9 +56,14 @@ async function saveAccount() {
     av_domain:         document.getElementById('avDomain').value.trim(),
   };
 
+  if (!editKey && (!data.meta_access_token || !data.meta_account_id)) {
+    alert('Meta Access Token e Meta Account ID são obrigatórios para cadastrar uma nova conta.');
+    return;
+  }
+
   try {
     if (editKey) {
-      await apiFetch(`/api/accounts/${editKey}`, { method: 'PUT', body: JSON.stringify(data) });
+      await apiFetch(`/api/accounts/${encodeURIComponent(editKey)}`, { method: 'PUT', body: JSON.stringify(data) });
     } else {
       await apiFetch('/api/accounts', { method: 'POST', body: JSON.stringify(data) });
     }
@@ -73,7 +78,7 @@ async function saveAccount() {
 async function deleteAccount(key) {
   if (!confirm(`Remover conta "${key}"?`)) return;
   try {
-    await apiFetch(`/api/accounts/${key}`, { method: 'DELETE' });
+    await apiFetch(`/api/accounts/${encodeURIComponent(key)}`, { method: 'DELETE' });
     loadAccounts();
   } catch(e) {
     alert('Erro: ' + e.message);
@@ -127,11 +132,11 @@ ob_start();
         <input id="metaAppSecret" type="password" placeholder="••••••••" class="input input-sm input-bordered">
       </div>
       <div class="form-control md:col-span-2">
-        <label class="label label-text text-xs">Meta Access Token</label>
+        <label class="label label-text text-xs">Meta Access Token *</label>
         <input id="metaAccessToken" type="password" placeholder="EAA..." class="input input-sm input-bordered">
       </div>
       <div class="form-control">
-        <label class="label label-text text-xs">Meta Account ID</label>
+        <label class="label label-text text-xs">Meta Account ID *</label>
         <input id="metaAccountId" type="text" placeholder="act_XXXXXXXXXX" class="input input-sm input-bordered">
       </div>
       <div class="form-control">

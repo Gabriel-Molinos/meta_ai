@@ -96,6 +96,9 @@ async function apiFetch(url,opts={}){
   if(!res.ok) throw new Error(await res.text());
   return res.json();
 }
+function apiErrorMessage(err){
+  try { return JSON.parse(err.message).message || err.message; } catch { return err.message; }
+}
 
 // ── Navegação entre passos ─────────────────────────────────────────────────────
 function setStep(n){
@@ -208,14 +211,14 @@ async function loadPixelsAndPages(){
     pxSel.innerHTML= pixels.length
       ? '<option value="">Selecione um pixel</option>'+pixels.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')
       : '<option value="">Nenhum pixel encontrado</option>';
-  } else pxSel.innerHTML='<option value="">Erro ao carregar pixels</option>';
+  } else pxSel.innerHTML=`<option value="">Erro: ${esc(apiErrorMessage(px.reason))}</option>`;
 
   if(pg.status==='fulfilled'){
     const pages=pg.value.data||[];
     pgSel.innerHTML= pages.length
       ? '<option value="">Selecione uma página</option>'+pages.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')
       : '<option value="">Nenhuma página encontrada</option>';
-  } else pgSel.innerHTML='<option value="">Erro ao carregar páginas</option>';
+  } else pgSel.innerHTML=`<option value="">Erro: ${esc(apiErrorMessage(pg.reason))}</option>`;
   loadCustomConversions();
 }
 
