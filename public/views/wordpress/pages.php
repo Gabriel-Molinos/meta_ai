@@ -1,5 +1,6 @@
 <?php
 $pageTitle = 'WordPress — Publicar Post com IA';
+$isAdmin   = ($GLOBALS['_authType'] ?? 'admin') === 'admin';
 
 ob_start();
 ?>
@@ -288,6 +289,7 @@ ob_start();
       <div class="text-xs opacity-50 italic">Carregando...</div>
     </div>
 
+    <?php if ($isAdmin): ?>
     <div class="divider my-4 text-xs opacity-40">Adicionar / Editar Site</div>
 
     <form id="siteForm" onsubmit="saveSite(event)" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -340,6 +342,7 @@ ob_start();
         </button>
       </div>
     </form>
+    <?php endif; ?>
   </div>
   <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>
@@ -356,6 +359,7 @@ ob_start();
       <div class="text-xs opacity-50 italic">Carregando...</div>
     </div>
 
+    <?php if ($isAdmin): ?>
     <div class="divider my-4 text-xs opacity-40">Criar / Editar Template</div>
 
     <form id="templateForm" onsubmit="saveTemplate(event)" class="flex flex-col gap-3">
@@ -408,12 +412,14 @@ ob_start();
         </button>
       </div>
     </form>
+    <?php endif; ?>
   </div>
   <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>
 
 <script>
 // ── State ────────────────────────────────────────────────────────
+const IS_ADMIN        = <?= json_encode($isAdmin) ?>;
 let sites             = [];
 let allAccounts       = [];
 let templates         = [];
@@ -1099,7 +1105,7 @@ function renderSitesTable() {
     <div class="overflow-x-auto">
       <table class="table table-sm w-full">
         <thead><tr class="bg-base-200 text-xs">
-          <th>Label</th><th>URL</th><th>Conta</th><th class="text-right">Ações</th>
+          <th>Label</th><th>URL</th><th>Conta</th>${IS_ADMIN ? '<th class="text-right">Ações</th>' : ''}
         </tr></thead>
         <tbody>
           ${sites.map(s => `
@@ -1107,10 +1113,10 @@ function renderSitesTable() {
               <td class="font-semibold text-xs">${esc(s.label)}</td>
               <td class="text-xs opacity-70 max-w-[160px] truncate">${esc(s.url)}</td>
               <td class="text-xs opacity-70">${esc(s.account_label || '—')}</td>
-              <td class="text-right">
+              ${IS_ADMIN ? `<td class="text-right">
                 <button onclick="editSite(${s.id})" class="btn btn-ghost btn-xs">✏</button>
                 <button onclick="deleteSite(${s.id})" class="btn btn-ghost btn-xs text-error">✕</button>
-              </td>
+              </td>` : ''}
             </tr>`).join('')}
         </tbody>
       </table>
@@ -1228,8 +1234,8 @@ function renderTemplatesList() {
         ${tpl.source_url  ? `<a href="${esc(tpl.source_url)}" target="_blank" class="text-[10px] text-primary opacity-70 truncate">${esc(tpl.source_url)}</a>` : ''}
       </div>
       <div class="flex gap-1 shrink-0">
-        ${!tpl.is_system ? `<button onclick="editTemplate(${tpl.id})" class="btn btn-ghost btn-xs border border-base-300">Editar</button>` : ''}
-        ${!tpl.is_system ? `<button onclick="deleteTemplate(${tpl.id})" class="btn btn-ghost btn-xs text-error border border-error/30">✕</button>` : ''}
+        ${(IS_ADMIN && !tpl.is_system) ? `<button onclick="editTemplate(${tpl.id})" class="btn btn-ghost btn-xs border border-base-300">Editar</button>` : ''}
+        ${(IS_ADMIN && !tpl.is_system) ? `<button onclick="deleteTemplate(${tpl.id})" class="btn btn-ghost btn-xs text-error border border-error/30">✕</button>` : ''}
       </div>
     </div>`).join('') + '</div>';
 }

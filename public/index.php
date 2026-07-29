@@ -174,12 +174,17 @@ $router->addRoute('DELETE', '/api/users/{id}', function (Request $r, array $p) u
 });
 
 // API — WordPress Sites
-$router->addRoute('GET',    '/api/wordpress/sites',     function () use ($auth, $wpSiteModel) {
-    $auth->handle(Request::fromGlobals());
-    Response::json(['status' => 'success', 'data' => $wpSiteModel->all()]);
+$router->addRoute('GET',    '/api/wordpress/sites',     function (Request $r) use ($auth, $wpSiteModel) {
+    $ctx = $auth->resolveContext($r);
+    if ($ctx['type'] === 'admin') {
+        Response::json(['status' => 'success', 'data' => $wpSiteModel->all()]);
+    } else {
+        Response::json(['status' => 'success', 'data' => $wpSiteModel->allForUser($ctx['user_id'])]);
+    }
 });
-$router->addRoute('POST',   '/api/wordpress/sites',     function () use ($auth, $wpSiteModel) {
-    $auth->handle(Request::fromGlobals());
+$router->addRoute('POST',   '/api/wordpress/sites',     function (Request $r) use ($auth, $wpSiteModel) {
+    $ctx = $auth->resolveContext($r);
+    if ($ctx['type'] !== 'admin') { Response::error('Forbidden', 403); return; }
     $data = json_decode(file_get_contents('php://input'), true) ?? [];
     if (empty($data['label']) || empty($data['url']) || empty($data['wp_username']) || empty($data['wp_app_password'])) {
         Response::error('label, url, wp_username e wp_app_password são obrigatórios', 422);
@@ -188,25 +193,27 @@ $router->addRoute('POST',   '/api/wordpress/sites',     function () use ($auth, 
     $id = $wpSiteModel->create($data);
     Response::json(['status' => 'success', 'id' => $id], 201);
 });
-$router->addRoute('PUT',    '/api/wordpress/sites/{id}', function ($req, array $params) use ($auth, $wpSiteModel) {
-    $auth->handle(Request::fromGlobals());
+$router->addRoute('PUT',    '/api/wordpress/sites/{id}', function (Request $r, array $params) use ($auth, $wpSiteModel) {
+    $ctx = $auth->resolveContext($r);
+    if ($ctx['type'] !== 'admin') { Response::error('Forbidden', 403); return; }
     $data = json_decode(file_get_contents('php://input'), true) ?? [];
     $wpSiteModel->update((int) $params['id'], $data);
     Response::json(['status' => 'success']);
 });
-$router->addRoute('DELETE', '/api/wordpress/sites/{id}', function ($req, array $params) use ($auth, $wpSiteModel) {
-    $auth->handle(Request::fromGlobals());
+$router->addRoute('DELETE', '/api/wordpress/sites/{id}', function (Request $r, array $params) use ($auth, $wpSiteModel) {
+    $ctx = $auth->resolveContext($r);
+    if ($ctx['type'] !== 'admin') { Response::error('Forbidden', 403); return; }
     $wpSiteModel->delete((int) $params['id']);
     Response::json(['status' => 'success']);
 });
 
 // API — WordPress Templates
 $router->addRoute('GET',  '/api/wordpress/templates',     function () use ($auth, $wpTplModel) {
-    $auth->handle(Request::fromGlobals());
+    $auth->handleAny(Request::fromGlobals());
     Response::json($wpTplModel->findAll());
 });
 $router->addRoute('GET',  '/api/wordpress/templates/{id}', function ($req, array $params) use ($auth, $wpTplModel) {
-    $auth->handle(Request::fromGlobals());
+    $auth->handleAny(Request::fromGlobals());
     $tpl = $wpTplModel->find((int) $params['id']);
     if (!$tpl) { Response::error('Template não encontrado', 404); return; }
     Response::json($tpl);
@@ -241,7 +248,7 @@ $router->addRoute('POST', '/api/wordpress/templates/generate-from-url', function
 
 // API — WordPress Generate + Publish
 $router->addRoute('POST', '/api/wordpress/generate', function () use ($auth, $gemini, $wpTplModel) {
-    $auth->handle(Request::fromGlobals());
+    $auth->handleAny(Request::fromGlobals());
     $data       = json_decode(file_get_contents('php://input'), true) ?? [];
     $topic      = trim($data['topic'] ?? '');
     $language   = trim($data['language'] ?? 'English');
@@ -267,7 +274,7 @@ $router->addRoute('POST', '/api/wordpress/generate', function () use ($auth, $ge
 });
 
 $router->addRoute('POST', '/api/wordpress/generate-featured-image', function () use ($auth, $creativeGen) {
-    $auth->handle(Request::fromGlobals());
+    $auth->handleAny(Request::fromGlobals());
     $data  = json_decode(file_get_contents('php://input'), true) ?? [];
     $topic = trim($data['topic'] ?? '');
     $title = trim($data['title'] ?? '');
@@ -276,8 +283,8 @@ $router->addRoute('POST', '/api/wordpress/generate-featured-image', function () 
     Response::json(['status' => 'success', 'data' => $result['data'], 'mime_type' => $result['mimeType']]);
 });
 
-$router->addRoute('POST', '/api/wordpress/pages', function () use ($auth, $wpSiteModel, $wpService) {
-    $auth->handle(Request::fromGlobals());
+$router->addRoute('POST', '/api/wordpress/pages', function (Request $r) use ($auth, $wpSiteModel, $wpService) {
+    $ctx    = $auth->resolveContext($r);
     $data   = json_decode(file_get_contents('php://input'), true) ?? [];
     $siteId = (int) ($data['site_id'] ?? 0);
     $title  = trim($data['title'] ?? '');
@@ -292,6 +299,15 @@ $router->addRoute('POST', '/api/wordpress/pages', function () use ($auth, $wpSit
 
     $siteRow = $wpSiteModel->find($siteId);
     if (!$siteRow) { Response::error('Site não encontrado', 404); return; }
+
+    if ($ctx['type'] !== 'admin') {
+        $allowedAccountIds = array_column((new User())->getAccounts($ctx['user_id']), 'id');
+        if (!in_array((int) $siteRow['account_id'], $allowedAccountIds, true)) {
+            Response::error('Forbidden', 403);
+            return;
+        }
+    }
+
     $site = $wpSiteModel->toConfig($siteRow);
 
     $featuredMediaId = 0;
