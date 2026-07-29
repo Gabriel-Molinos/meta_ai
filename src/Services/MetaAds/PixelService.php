@@ -88,7 +88,7 @@ class PixelService
     public function fetchPages(): array
     {
         $response = $this->http->get(
-            "{$this->baseUrl}/me/accounts",
+            "{$this->baseUrl}/act_{$this->accountId}/promote_pages",
             [],
             ['fields' => 'id,name,category', 'access_token' => $this->accessToken, 'limit' => 100],
             30
