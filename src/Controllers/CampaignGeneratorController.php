@@ -63,7 +63,7 @@ class CampaignGeneratorController
         $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
-        Response::json(['data' => $service->fetchCustomConversions()]);
+        Response::json(['data' => $service->fetchCustomConversions($_GET['pixel_id'] ?? '')]);
     }
 
     public function create(Request $request, array $params): never

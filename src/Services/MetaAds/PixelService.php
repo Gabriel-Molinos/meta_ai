@@ -70,7 +70,7 @@ class PixelService
         return $all;
     }
 
-    public function fetchCustomConversions(): array
+    public function fetchCustomConversions(string $pixelId = ''): array
     {
         try {
             $response = $this->http->get(
@@ -79,7 +79,11 @@ class PixelService
                 ['fields' => 'id,name,pixel_id,rule,creation_time', 'access_token' => $this->accessToken, 'limit' => 100],
                 30
             );
-            return $response['data'] ?? [];
+            $data = $response['data'] ?? [];
+            if ($pixelId !== '') {
+                $data = array_values(array_filter($data, fn($c) => ($c['pixel_id'] ?? '') === $pixelId));
+            }
+            return $data;
         } catch (\Throwable) {
             return [];
         }

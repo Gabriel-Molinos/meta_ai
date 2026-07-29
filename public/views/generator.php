@@ -251,17 +251,24 @@ async function loadEvents(){
 
 async function loadCustomConversions(){
   const ak=state.account_key||document.getElementById('s1_account').value;
+  const px=document.getElementById('s3_pixel').value;
   const cvSel=document.getElementById('s3_custom_conversion');
+  if(!px){ cvSel.innerHTML='<option value="">Selecione um pixel primeiro</option>'; return; }
   cvSel.innerHTML='<option value="">Carregando...</option>';
   try{
-    const data=await apiFetch(`/api/generator/customconversions?account_key=${encodeURIComponent(ak)}`);
+    const data=await apiFetch(`/api/generator/customconversions?account_key=${encodeURIComponent(ak)}&pixel_id=${encodeURIComponent(px)}`);
     const cvs=data.data||[];
     if(cvs.length===0){
-      cvSel.innerHTML='<option value="">Nenhuma conversão personalizada encontrada</option>';
+      cvSel.innerHTML='<option value="">Nenhuma conversão personalizada encontrada para este pixel</option>';
     } else {
       cvSel.innerHTML='<option value="">Nenhuma (usar evento do pixel)</option>'+cvs.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
     }
   } catch(e){ cvSel.innerHTML='<option value="">Erro ao carregar conversões</option>'; }
+}
+
+function onPixelChange(){
+  loadEvents();
+  loadCustomConversions();
 }
 
 // ── Toggle posicionamentos por plataforma ─────────────────────────────────────
@@ -641,7 +648,7 @@ async function loadDraft(id){
     state.account_key = p.account_key || '';
     if(state.account_key){
       await loadPixelsAndPages();
-      if(p.pixel_id){ document.getElementById('s3_pixel').value=p.pixel_id; await loadEvents(); }
+      if(p.pixel_id){ document.getElementById('s3_pixel').value=p.pixel_id; await loadEvents(); await loadCustomConversions(); }
       if(p.pixel_event) document.getElementById('s3_event').value=p.pixel_event;
       if(p.custom_conversion_id) document.getElementById('s3_custom_conversion').value=p.custom_conversion_id;
       if(p.page_id) document.getElementById('s3_page').value=p.page_id;
@@ -950,7 +957,7 @@ ob_start();
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="label label-text text-xs pb-1">Pixel do Meta</label>
-          <select id="s3_pixel" class="select select-bordered w-full" onchange="loadEvents()">
+          <select id="s3_pixel" class="select select-bordered w-full" onchange="onPixelChange()">
             <option value="">Selecione uma conta primeiro</option>
           </select>
         </div>
