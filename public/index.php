@@ -23,6 +23,7 @@ use App\Controllers\ApprovalController;
 use App\Controllers\AuthController;
 use App\Controllers\CampaignController;
 use App\Controllers\CampaignGeneratorController;
+use App\Controllers\CreativeAgentController;
 use App\Core\Cache\RedisCache;
 use App\Core\Database\Connection;
 use App\Core\Encryption\Encryptor;
@@ -37,8 +38,11 @@ use App\Models\CampaignReport;
 use App\Models\User;
 use App\Models\WordPressSite;
 use App\Models\WordPressTemplate;
+use App\Services\AI\CreativeAgentService;
+use App\Services\AI\CreativeAnalysisService;
 use App\Services\AI\CreativeGenerationService;
 use App\Services\AI\GeminiService;
+use App\Services\AI\VeoVideoService;
 use App\Services\WordPress\WordPressService;
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -59,11 +63,15 @@ $wpSiteModel    = new WordPressSite($enc);
 $wpTplModel     = new WordPressTemplate();
 $wpService      = new WordPressService();
 $creativeGen    = new CreativeGenerationService($config['gemini']['api_key'], $http);
+$creativeAnalysis = new CreativeAnalysisService($config['gemini'], $http);
+$veoService       = new VeoVideoService($config['gemini']['api_key'], $http);
+$creativeAgent    = new CreativeAgentService($creativeAnalysis, $creativeGen, $veoService);
 
 // ── Controladores ─────────────────────────────────────────────────────────────
 $accountCtrl   = new AccountController($accountModel, $auth);
 $campaignCtrl  = new CampaignController($reportModel, $auth);
 $aiCtrl        = new AiController($gemini, $reportModel, $auth);
+$creativeAgentCtrl = new CreativeAgentController($creativeAgent, $auth);
 $authCtrl      = new AuthController(
     $config['api_key'],
     $config['google_oauth']['client_id'],
@@ -106,6 +114,15 @@ $router->addRoute('GET',  '/api/generator/pages',             [$generatorCtrl, '
 $router->addRoute('GET',  '/api/generator/customconversions', [$generatorCtrl, 'customConversions']);
 $router->addRoute('POST', '/api/generator/create',            [$generatorCtrl, 'create']);
 $router->addRoute('POST', '/api/generator/submit',            [$generatorCtrl, 'submit']);
+
+// API — Agente de IA para geração de criativos (Passo 4 do Gerador de Campanhas)
+$router->addRoute('POST', '/api/generator/creative/analyze/image',        [$creativeAgentCtrl, 'analyzeImage']);
+$router->addRoute('POST', '/api/generator/creative/analyze/video',        [$creativeAgentCtrl, 'analyzeVideo']);
+$router->addRoute('POST', '/api/generator/creative/analyze/text',         [$creativeAgentCtrl, 'analyzeText']);
+$router->addRoute('POST', '/api/generator/creative/generate/image',       [$creativeAgentCtrl, 'generateImage']);
+$router->addRoute('POST', '/api/generator/creative/generate/video/start', [$creativeAgentCtrl, 'startVideo']);
+$router->addRoute('GET',  '/api/generator/creative/generate/video/status', [$creativeAgentCtrl, 'videoStatus']);
+$router->addRoute('POST', '/api/generator/creative/generate/video/download', [$creativeAgentCtrl, 'downloadVideo']);
 
 // API — Aprovações (admin only)
 $router->addRoute('GET',  '/api/approvals/pending-count',   [$approvalCtrl, 'pendingCount']);

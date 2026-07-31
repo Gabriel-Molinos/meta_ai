@@ -65,6 +65,25 @@ const PLACEMENTS = {
   ],
 };
 
+// Tamanhos Meta disponíveis para o Agente de IA — o Gemini image cobre as 4 proporções
+// de imagem quase exatamente, mas o Veo (vídeo) só gera 16:9 ou 9:16, então "quadrado"
+// e "vertical" ficam marcados como aproximação nesse modo.
+const AI_PLACEMENTS = {
+  image: [
+    { key: 'feed_square',    label: 'Feed (quadrado) — 1:1' },
+    { key: 'feed_rectangle', label: 'Feed (retângulo) — ~1.91:1 (gerado em 16:9)' },
+    { key: 'feed_vertical',  label: 'Feed (vertical) — 4:5' },
+    { key: 'stories_reels',  label: 'Stories / Reels — 9:16' },
+  ],
+  video: [
+    { key: 'feed_landscape', label: 'Feed (landscape) — 16:9' },
+    { key: 'feed_square',    label: 'Feed (quadrado) — 1:1 (gerado em 16:9)' },
+    { key: 'feed_vertical',  label: 'Feed (vertical) — 4:5 (gerado em 9:16)' },
+    { key: 'stories_reels',  label: 'Stories / Reels — 9:16' },
+  ],
+};
+const VEO_PRICE_PER_SEC = { fast: 0.15, standard: 0.40 };
+
 // ── Estado do formulário ───────────────────────────────────────────────────────
 const state = {
   step: 1,
@@ -296,7 +315,18 @@ function filterCountries(){
 let adIdCounter=0;
 function addAd(){
   const id=adIdCounter++;
-  state.ads.push({id,name:'',primary_text:'',headline:'',link_description:'',url_tags:'',cta:'LEARN_MORE',media_type:'image',file:null,preview:null});
+  state.ads.push({
+    id,name:'',primary_text:'',headline:'',link_description:'',url_tags:'',cta:'LEARN_MORE',media_type:'image',file:null,preview:null,
+    source_mode:'upload',           // 'upload' | 'ai'
+    ai_example_type:'image',        // 'image'|'video'|'text'|'html'
+    ai_example_file:null, ai_example_preview:null, ai_example_text:'',
+    ai_brief:null,                  // brief editável, após "Analisar"
+    ai_recommended_media_type:null, // preenchido após analisar texto/html
+    ai_effective_media_type:null,   // decisão final (recomendação ou sobreposta pelo usuário)
+    ai_reasoning:'',                // motivo da recomendação (texto/HTML)
+    ai_placement:'', ai_quality:'fast',
+    ai_video_op:null, ai_video_keyframe:null, ai_video_status:'idle', ai_error:null,
+  });
   renderAds();
 }
 
@@ -402,6 +432,13 @@ function buildAdCard(ad){
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <div><strong>Tamanhos recomendados (${ad.media_type==='video'?'Vídeo':'Imagem'}):</strong><ul class="mt-1 space-y-0.5">${dimsHtml}</ul></div>
       </div>
+      <div class="flex gap-2">
+        <button type="button" onclick="toggleAdSourceMode(${ad.id},'upload')"
+                class="btn btn-xs ${ad.source_mode==='upload'?'btn-primary':'btn-ghost border border-base-300'}">📁 Enviar arquivo</button>
+        <button type="button" onclick="toggleAdSourceMode(${ad.id},'ai')"
+                class="btn btn-xs ${ad.source_mode==='ai'?'btn-primary':'btn-ghost border border-base-300'}">✦ Gerar com IA</button>
+      </div>
+      ${ad.source_mode==='ai' ? buildAiPanel(ad) : `
       <div class="border-2 border-dashed border-base-300 rounded-lg p-4 text-center cursor-pointer hover:border-primary transition-colors"
            onclick="document.getElementById('file_${ad.id}').click()">
         <input type="file" id="file_${ad.id}" class="hidden" accept="${fileAccept}"
@@ -413,9 +450,135 @@ function buildAdCard(ad){
                 : `<img src="${ad.preview}" class="max-h-32 rounded object-contain">`)
             : `<div class="text-sm opacity-50"><div class="text-3xl mb-1">${ad.media_type==='video'?'🎬':'🖼'}</div>Clique para selecionar ${ad.media_type==='video'?'vídeo':'imagem'}</div>`}
         </div>
-      </div>
+      </div>`}
     </div>
   </div>`;
+}
+
+function buildAiPanel(ad){
+  const exTypes=[['image','Imagem'],['video','Vídeo'],['text','Texto'],['html','HTML']];
+  const exTypeBtns=exTypes.map(([v,l])=>`
+    <button type="button" onclick="setAiExampleType(${ad.id},'${v}')"
+            class="btn btn-xs ${ad.ai_example_type===v?'btn-primary':'btn-ghost border border-base-300'}">${l}</button>`).join('');
+
+  const isFileType = ad.ai_example_type==='image' || ad.ai_example_type==='video';
+  const exampleInput = isFileType
+    ? `<div class="border-2 border-dashed border-base-300 rounded-lg p-3 text-center cursor-pointer hover:border-primary transition-colors"
+            onclick="document.getElementById('ai_file_${ad.id}').click()">
+         <input type="file" id="ai_file_${ad.id}" class="hidden" accept="${ad.ai_example_type==='video'?'video/*':'image/*'}"
+                onchange="handleAiExampleFile(${ad.id},this)">
+         <div id="ai_example_preview_${ad.id}" class="flex justify-center">
+           ${ad.ai_example_preview
+             ? (ad.ai_example_type==='video'
+                 ? `<video src="${ad.ai_example_preview}" class="max-h-24 rounded" controls muted></video>`
+                 : `<img src="${ad.ai_example_preview}" class="max-h-24 rounded object-contain">`)
+             : `<div class="text-xs opacity-50">Clique para enviar ${ad.ai_example_type==='video'?'o vídeo':'a imagem'} de exemplo</div>`}
+         </div>
+       </div>`
+    : `<textarea oninput="updateAiExampleText(${ad.id},this.value)"
+                 class="textarea textarea-bordered textarea-sm w-full h-20 font-mono"
+                 placeholder="${ad.ai_example_type==='html'?'Cole aqui o HTML de exemplo...':'Descreva o criativo que você quer...'}">${esc(ad.ai_example_text)}</textarea>`;
+
+  const effectiveType = ad.ai_effective_media_type || ad.ai_recommended_media_type || (ad.ai_example_type==='video'?'video':'image');
+  const isVideoGen = effectiveType==='video';
+
+  const placementOpts=(AI_PLACEMENTS[isVideoGen?'video':'image'])
+    .map(p=>`<option value="${p.key}" ${ad.ai_placement===p.key?'selected':''}>${p.label}</option>`).join('');
+
+  const canAnalyze = isFileType ? !!ad.ai_example_file : ad.ai_example_text.trim().length>0;
+
+  const mediaTypeChoice = ad.ai_recommended_media_type ? `
+    <div class="text-xs">
+      <strong>Sugestão da IA:</strong> ${ad.ai_recommended_media_type==='video'?'Vídeo':'Imagem'}
+      ${ad.ai_reasoning?` — <span class="opacity-70">${esc(ad.ai_reasoning)}</span>`:''}
+      <div class="flex gap-3 mt-1">
+        <label class="flex items-center gap-1 cursor-pointer text-xs">
+          <input type="radio" name="ai_mt_${ad.id}" ${effectiveType==='image'?'checked':''}
+                 onchange="setAiEffectiveMediaType(${ad.id},'image')"> Imagem
+        </label>
+        <label class="flex items-center gap-1 cursor-pointer text-xs">
+          <input type="radio" name="ai_mt_${ad.id}" ${effectiveType==='video'?'checked':''}
+                 onchange="setAiEffectiveMediaType(${ad.id},'video')"> Vídeo
+        </label>
+      </div>
+    </div>` : '';
+
+  const briefBlock = ad.ai_brief ? `
+    <div class="border border-base-300 rounded-lg p-3 space-y-2 bg-base-200/40">
+      ${mediaTypeChoice}
+      <label class="label label-text text-xs pb-0">Prompt de geração (edite se quiser)</label>
+      <textarea onchange="updateAiBriefField(${ad.id},'suggested_prompt',this.value)"
+                class="textarea textarea-bordered textarea-xs w-full h-16">${esc(ad.ai_brief.suggested_prompt||'')}</textarea>
+    </div>` : '';
+
+  const qualityBlock = isVideoGen ? `
+    <div class="grid grid-cols-2 gap-2">
+      <div>
+        <label class="label label-text text-xs pb-0">Duração</label>
+        <select id="ai_duration_${ad.id}" class="select select-bordered select-xs w-full">
+          <option value="4">4s</option><option value="6">6s</option><option value="8" selected>8s</option>
+        </select>
+      </div>
+      <div>
+        <label class="label label-text text-xs pb-0">Qualidade</label>
+        <select id="ai_quality_${ad.id}" onchange="updateAd(${ad.id},'ai_quality',this.value)" class="select select-bordered select-xs w-full">
+          <option value="fast" ${ad.ai_quality!=='standard'?'selected':''}>Rápido (~US$0,15/s)</option>
+          <option value="standard" ${ad.ai_quality==='standard'?'selected':''}>Padrão (~US$0,40/s)</option>
+        </select>
+      </div>
+    </div>` : '';
+
+  const genLabel = isVideoGen ? '🎬 Gerar Vídeo' : '🖼 Gerar Imagem';
+  const busy = ['working','starting_video','polling','downloading'].includes(ad.ai_video_status);
+  const genDisabled = (!ad.ai_brief || busy) ? 'disabled' : '';
+
+  return `
+    <div class="flex gap-2 flex-wrap">${exTypeBtns}</div>
+    ${exampleInput}
+    <div>
+      <label class="label label-text text-xs pb-0">Tamanho Meta alvo</label>
+      <select onchange="updateAd(${ad.id},'ai_placement',this.value)" class="select select-bordered select-xs w-full">
+        <option value="">Selecione...</option>
+        ${placementOpts}
+      </select>
+    </div>
+    <div class="flex gap-2">
+      <button type="button" id="ai_analyze_btn_${ad.id}" onclick="analyzeAiExample(${ad.id})" class="btn btn-xs btn-outline" ${canAnalyze?'':'disabled'}>🔍 Analisar</button>
+      <button type="button" onclick="generateAiCreative(${ad.id})" class="btn btn-xs btn-accent" ${genDisabled}>${genLabel}</button>
+    </div>
+    ${briefBlock}
+    ${qualityBlock}
+    ${renderAiStatus(ad)}
+  `;
+}
+
+function renderAiStatus(ad){
+  const map={
+    working:'Gerando imagem...', keyframe_ready:'Keyframe pronto — confirme para gerar o vídeo',
+    starting_video:'Iniciando vídeo...', polling:'Processando vídeo no Veo (pode levar minutos)...',
+    downloading:'Baixando vídeo...', done:'Pronto ✓', timeout:'Tempo esgotado — tente de novo',
+    error: ad.ai_error||'Erro',
+  };
+  const label=map[ad.ai_video_status]||'';
+  const isError=ad.ai_video_status==='error'||ad.ai_video_status==='timeout';
+  const isBusy=['working','starting_video','polling','downloading'].includes(ad.ai_video_status);
+
+  const statusLine = label ? `<div class="text-xs flex items-center gap-2 ${isError?'text-error':'opacity-70'}">
+    ${isBusy?'<span class="loading loading-spinner loading-xs"></span>':''}${esc(label)}
+  </div>` : '';
+
+  const keyframePreview = (ad.ai_video_status==='keyframe_ready' && ad.ai_video_keyframe)
+    ? `<img src="data:${ad.ai_video_keyframe.mimeType};base64,${ad.ai_video_keyframe.data}" class="max-h-32 rounded object-contain border border-base-300">`
+    : '';
+
+  const finalPreview = (ad.ai_video_status==='done' && ad.preview)
+    ? (ad.media_type==='video'
+        ? `<video src="${ad.preview}" class="max-h-32 rounded" controls muted></video>`
+        : `<img src="${ad.preview}" class="max-h-32 rounded object-contain border border-base-300">`)
+    : '';
+
+  if(!statusLine && !keyframePreview && !finalPreview) return '';
+  return `<div class="flex flex-col gap-2">${statusLine}${keyframePreview||finalPreview}</div>`;
 }
 
 function renderAdCard(id){
@@ -423,6 +586,231 @@ function renderAdCard(id){
   if(!ad) return;
   const card=document.getElementById(`adcard_${id}`);
   if(card) card.outerHTML=buildAdCard(ad);
+}
+
+// ── Agente de IA — geração de criativos ────────────────────────────────────────
+function toggleAdSourceMode(id,mode){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.source_mode=mode;
+  renderAdCard(id);
+}
+
+function setAiExampleType(id,type){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.ai_example_type=type;
+  ad.ai_example_file=null; ad.ai_example_preview=null; ad.ai_example_text='';
+  ad.ai_brief=null; ad.ai_recommended_media_type=null; ad.ai_effective_media_type=null;
+  ad.ai_video_op=null; ad.ai_video_keyframe=null; ad.ai_video_status='idle'; ad.ai_error=null;
+  renderAdCard(id);
+}
+
+function handleAiExampleFile(id,input){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad||!input.files[0]) return;
+  ad.ai_example_file=input.files[0];
+  ad.ai_example_preview=URL.createObjectURL(ad.ai_example_file);
+  renderAdCard(id);
+}
+
+function updateAiExampleText(id,value){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.ai_example_text=value;
+  const btn=document.getElementById(`ai_analyze_btn_${id}`);
+  if(btn) btn.disabled = value.trim().length===0;
+}
+
+function setAiEffectiveMediaType(id,type){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.ai_effective_media_type=type;
+  renderAdCard(id);
+}
+
+function updateAiBriefField(id,field,value){
+  const ad=state.ads.find(a=>a.id===id);
+  if(ad&&ad.ai_brief) ad.ai_brief[field]=value;
+}
+
+function fileToBase64(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result).split(',')[1]);
+    reader.onerror=reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function b64toBlob(b64,mime){
+  const bin=atob(b64);
+  const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return new Blob([bytes],{type:mime});
+}
+
+async function analyzeAiExample(id){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.ai_error=null;
+  try{
+    let data;
+    if(ad.ai_example_type==='image'||ad.ai_example_type==='video'){
+      if(!ad.ai_example_file){ alert('Envie o arquivo de exemplo primeiro.'); return; }
+      const fd=new FormData();
+      fd.append('example_file',ad.ai_example_file);
+      data=await apiFetch(`/api/generator/creative/analyze/${ad.ai_example_type}`,{method:'POST',body:fd});
+      ad.ai_brief=data.brief;
+      ad.ai_recommended_media_type=null;
+      ad.ai_effective_media_type=ad.ai_example_type;
+    } else {
+      if(!ad.ai_example_text.trim()){ alert('Escreva o exemplo primeiro.'); return; }
+      data=await apiFetch('/api/generator/creative/analyze/text',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({content:ad.ai_example_text,source_type:ad.ai_example_type}),
+      });
+      ad.ai_brief=data.brief;
+      ad.ai_recommended_media_type=data.recommended_media_type;
+      ad.ai_effective_media_type=data.recommended_media_type;
+      ad.ai_reasoning=data.reasoning||'';
+    }
+  } catch(e){
+    ad.ai_error=apiErrorMessage(e);
+    alert('Erro ao analisar: '+ad.ai_error);
+  } finally {
+    renderAdCard(id);
+  }
+}
+
+function generateAiCreative(id){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad||!ad.ai_brief) return;
+  const effectiveType=ad.ai_effective_media_type||ad.ai_recommended_media_type||(ad.ai_example_type==='video'?'video':'image');
+  return effectiveType==='video' ? generateAiVideo(id) : generateAiImage(id,'image');
+}
+
+async function generateAiImage(id,mediaContext){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad||!ad.ai_brief) return;
+  ad.ai_video_status='working'; ad.ai_error=null;
+  renderAdCard(id);
+  try{
+    const body={
+      prompt: ad.ai_brief.suggested_prompt||'',
+      placement: ad.ai_placement || (mediaContext==='video'?'feed_landscape':'feed_square'),
+      media_context: mediaContext,
+    };
+    if(ad.ai_example_type==='image' && ad.ai_example_file){
+      body.reference_image_base64=await fileToBase64(ad.ai_example_file);
+      body.reference_image_mime=ad.ai_example_file.type;
+    }
+    const data=await apiFetch('/api/generator/creative/generate/image',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
+    });
+    if(mediaContext==='video'){
+      ad.ai_video_keyframe={data:data.data,mimeType:data.mime_type};
+      ad.ai_video_status='keyframe_ready';
+    } else {
+      const blob=b64toBlob(data.data,data.mime_type);
+      ad.media_type='image';
+      ad.file=new File([blob],`ai_creative_${id}.png`,{type:data.mime_type});
+      ad.preview=URL.createObjectURL(ad.file);
+      ad.ai_video_status='done';
+    }
+  } catch(e){
+    ad.ai_error=apiErrorMessage(e);
+    ad.ai_video_status='error';
+  } finally {
+    renderAdCard(id);
+  }
+}
+
+async function generateAiVideo(id){
+  let ad=state.ads.find(a=>a.id===id);
+  if(!ad||!ad.ai_brief) return;
+
+  if(!ad.ai_video_keyframe){
+    await generateAiImage(id,'video');
+    ad=state.ads.find(a=>a.id===id);
+    if(!ad||!ad.ai_video_keyframe) return; // falhou ao gerar o keyframe
+  }
+
+  const quality  = document.getElementById(`ai_quality_${id}`)?.value || ad.ai_quality || 'fast';
+  const duration = document.getElementById(`ai_duration_${id}`)?.value || '8';
+  const pricePerSec = VEO_PRICE_PER_SEC[quality] || VEO_PRICE_PER_SEC.fast;
+  const estCost = (pricePerSec*parseInt(duration,10)).toFixed(2);
+  if(!confirm(`Gerar este vídeo (${duration}s, qualidade ${quality==='standard'?'Padrão':'Rápida'}) custa aproximadamente US$${estCost}. Confirmar?`)) return;
+
+  ad.ai_video_status='starting_video'; ad.ai_error=null;
+  renderAdCard(id);
+  try{
+    const startData=await apiFetch('/api/generator/creative/generate/video/start',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        prompt: ad.ai_brief.suggested_prompt||'',
+        placement: ad.ai_placement||'feed_landscape',
+        duration, resolution:'720p', quality,
+        keyframe_image_base64: ad.ai_video_keyframe.data,
+        keyframe_image_mime: ad.ai_video_keyframe.mimeType,
+      }),
+    });
+    ad.ai_video_op=startData.operation_name;
+    ad.ai_video_status='polling';
+    renderAdCard(id);
+    aiVideoPollAttempts[id]=0;
+    pollAiVideo(id);
+  } catch(e){
+    ad.ai_error=apiErrorMessage(e);
+    ad.ai_video_status='error';
+    renderAdCard(id);
+  }
+}
+
+const aiVideoPollAttempts={};
+function pollAiVideo(id){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad||!ad.ai_video_op) return;
+
+  aiVideoPollAttempts[id]=(aiVideoPollAttempts[id]||0)+1;
+  if(aiVideoPollAttempts[id]>60){
+    ad.ai_error='Tempo esgotado aguardando o vídeo (mais de 5 minutos). Verifique novamente em instantes.';
+    ad.ai_video_status='timeout';
+    renderAdCard(id);
+    return;
+  }
+
+  setTimeout(async ()=>{
+    const current=state.ads.find(a=>a.id===id);
+    if(!current||!current.ai_video_op) return;
+    try{
+      const data=await apiFetch(`/api/generator/creative/generate/video/status?operation_name=${encodeURIComponent(current.ai_video_op)}`);
+      if(!data.done){ pollAiVideo(id); return; }
+      if(data.error){
+        current.ai_error=data.error; current.ai_video_status='error'; renderAdCard(id); return;
+      }
+      current.ai_video_status='downloading';
+      renderAdCard(id);
+
+      const res=await fetch('/api/generator/creative/generate/video/download',{
+        method:'POST',
+        headers:{'Authorization':'Bearer '+apiKey(),'Content-Type':'application/json'},
+        body:JSON.stringify({video_uri:data.videoUri}),
+      });
+      if(!res.ok) throw new Error(await res.text());
+      const blob=await res.blob();
+
+      current.media_type='video';
+      current.file=new File([blob],`ai_video_${id}.mp4`,{type:'video/mp4'});
+      current.preview=URL.createObjectURL(current.file);
+      current.ai_video_status='done';
+      renderAdCard(id);
+    } catch(e){
+      current.ai_error=apiErrorMessage(e);
+      current.ai_video_status='error';
+      renderAdCard(id);
+    }
+  },5000);
 }
 
 // ── Passo 5: Revisão ──────────────────────────────────────────────────────────
