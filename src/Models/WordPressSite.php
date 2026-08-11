@@ -23,6 +23,20 @@ class WordPressSite
         return array_map(fn($row) => $this->toPublic($row), $stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
+    public function allForUser(int $userId): array
+    {
+        $stmt = Connection::getInstance()->prepare(
+            'SELECT ws.*, a.label AS account_label
+             FROM wordpress_sites ws
+             JOIN accounts a ON a.id = ws.account_id
+             JOIN user_accounts ua ON ua.account_id = ws.account_id
+             WHERE ua.user_id = :user_id
+             ORDER BY ws.label'
+        );
+        $stmt->execute([':user_id' => $userId]);
+        return array_map(fn($row) => $this->toPublic($row), $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
     public function find(int $id): ?array
     {
         $stmt = Connection::getInstance()->prepare(

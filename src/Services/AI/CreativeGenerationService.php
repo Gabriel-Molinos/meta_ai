@@ -60,4 +60,47 @@ PROMPT;
 
         throw new \RuntimeException('Gemini não retornou imagem. Resposta: ' . json_encode($response));
     }
+
+    /**
+     * Gera um criativo de anúncio, travado na proporção de uma posição do Meta,
+     * opcionalmente condicionado a uma imagem de referência (edição/estilo).
+     *
+     * @param array{data:string,mimeType:string}|null $referenceImage
+     * @return array{data: string, mimeType: string}
+     */
+    public function generateAdCreativeImage(string $prompt, string $aspectRatio, ?array $referenceImage = null): array
+    {
+        $url     = self::BASE_URL . '/' . self::IMAGE_MODEL . ':generateContent';
+        $headers = ['x-goog-api-key' => $this->apiKey];
+
+        $parts = [];
+        if ($referenceImage !== null) {
+            $parts[] = ['inlineData' => [
+                'mimeType' => $referenceImage['mimeType'],
+                'data'     => $referenceImage['data'],
+            ]];
+        }
+        $parts[] = ['text' => $prompt];
+
+        $body = [
+            'contents'         => [['parts' => $parts]],
+            'generationConfig' => [
+                'responseModalities' => ['IMAGE'],
+                'temperature'        => 1.0,
+                'imageConfig'        => ['aspectRatio' => $aspectRatio],
+            ],
+        ];
+
+        $response = $this->http->post($url, $headers, $body, 90);
+        $part     = $response['candidates'][0]['content']['parts'][0] ?? null;
+
+        if (isset($part['inlineData']['data'])) {
+            return [
+                'data'     => $part['inlineData']['data'],
+                'mimeType' => $part['inlineData']['mimeType'] ?? 'image/png',
+            ];
+        }
+
+        throw new \RuntimeException('Gemini não retornou imagem. Resposta: ' . json_encode($response));
+    }
 }

@@ -32,6 +32,10 @@ class AccountController
             Response::error('account_key e label são obrigatórios', 422);
         }
 
+        if (empty($data['meta_access_token']) || empty($data['meta_account_id'])) {
+            Response::error('Meta Access Token e Meta Account ID são obrigatórios', 422);
+        }
+
         try {
             $this->account->create($data);
             Response::json(['status' => 'created'], 201);

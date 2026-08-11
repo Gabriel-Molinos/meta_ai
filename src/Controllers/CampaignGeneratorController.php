@@ -25,25 +25,37 @@ class CampaignGeneratorController
     public function pixels(Request $request, array $params): never
     {
         $this->auth->handleAny($request);
-        $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
-        $service = new PixelService($cfg['meta_ads'], $this->http);
-        Response::json(['data' => $service->fetchPixels()]);
+        $cfg = $this->resolveAccount($_GET['account_key'] ?? '');
+        try {
+            $service = new PixelService($cfg['meta_ads'], $this->http);
+            Response::json(['data' => $service->fetchPixels()]);
+        } catch (\Throwable $e) {
+            Response::error('Erro ao buscar pixels: ' . $e->getMessage());
+        }
     }
 
     public function events(Request $request, array $params): never
     {
         $this->auth->handleAny($request);
-        $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
-        $service = new PixelService($cfg['meta_ads'], $this->http);
-        Response::json(['data' => $service->fetchPixelEvents($_GET['pixel_id'] ?? '')]);
+        $cfg = $this->resolveAccount($_GET['account_key'] ?? '');
+        try {
+            $service = new PixelService($cfg['meta_ads'], $this->http);
+            Response::json(['data' => $service->fetchPixelEvents($_GET['pixel_id'] ?? '')]);
+        } catch (\Throwable $e) {
+            Response::error('Erro ao buscar eventos: ' . $e->getMessage());
+        }
     }
 
     public function pages(Request $request, array $params): never
     {
         $this->auth->handleAny($request);
-        $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
-        $service = new PixelService($cfg['meta_ads'], $this->http);
-        Response::json(['data' => $service->fetchPages()]);
+        $cfg = $this->resolveAccount($_GET['account_key'] ?? '');
+        try {
+            $service = new PixelService($cfg['meta_ads'], $this->http);
+            Response::json(['data' => $service->fetchPages()]);
+        } catch (\Throwable $e) {
+            Response::error('Erro ao buscar páginas: ' . $e->getMessage());
+        }
     }
 
     public function customConversions(Request $request, array $params): never
@@ -51,7 +63,7 @@ class CampaignGeneratorController
         $this->auth->handleAny($request);
         $cfg     = $this->resolveAccount($_GET['account_key'] ?? '');
         $service = new PixelService($cfg['meta_ads'], $this->http);
-        Response::json(['data' => $service->fetchCustomConversions()]);
+        Response::json(['data' => $service->fetchCustomConversions($_GET['pixel_id'] ?? '')]);
     }
 
     public function create(Request $request, array $params): never

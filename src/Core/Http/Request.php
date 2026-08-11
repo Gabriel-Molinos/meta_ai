@@ -20,7 +20,7 @@ class Request
     public static function fromGlobals(): self
     {
         $method  = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-        $uri     = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
+        $uri     = rawurldecode(strtok($_SERVER['REQUEST_URI'] ?? '/', '?'));
         $headers = self::extractHeaders();
 
         return new self($method, $uri, $headers);

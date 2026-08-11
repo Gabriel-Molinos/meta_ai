@@ -1,172 +1,85 @@
-# Plano v2 — Meta Ads + ActiveView Integration
+# Plano Do Meta Ads + Active View Integration API
+
+> Atualizado em 2026-07-28 para refletir o estado real do sistema (v1 era um plano inicial focado só em dashboard de ROAS; o escopo cresceu para gerador de campanhas com aprovação, gestão de usuários e módulo WordPress — ver histórico de commits).
+
+## Persona
+Você será um desenvolvedor full stack web, capaz de compreender facilmente as integrações webs via API.
 
 ## Visão Geral
 
-Sistema interno para consolidação e análise de dados de marketing digital. Cruza métricas do **Meta Ads** com dados de receita e sessões da **ActiveView**, calcula ROAS por campanha e persiste o histórico no MySQL. Suporta múltiplas contas com credenciais criptografadas. Possui interface Web com sistema de usuários (Google OAuth), gerador de campanhas Meta Ads com fluxo de aprovação, e gerador de páginas WordPress com IA.
+Sistema interno com três frentes:
 
----
+1. **Gerador de campanhas Meta Ads** — wizard guiado (5 passos) que monta campanha → adset → creative → ad. Usuários não-admin não publicam direto: submetem um *draft* que passa por aprovação de um admin antes de ir ao ar.
+2. **Consolidação de ROAS** — cruza métricas do **Meta Ads** com dados de receita e sessões da **ActiveView**, calcula ROAS por campanha e persiste o histórico no MySQL (`bin/sync.php`, agendado via Windows Task Scheduler, uma task por conta).
+3. **Geração de conteúdo WordPress** — cria posts/páginas com Gemini (texto + imagem de destaque) e publica em sites WordPress externos via REST API (Application Password).
+
+Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas no banco. Interface Web em MVC feito à mão (sem framework), autenticação dupla (admin por token estático, usuários por Google OAuth).
 
 ## Stack
 
 | Camada | Tecnologia |
-|---|---|
+| --- | ---- |
 | Linguagem | PHP 8.2+ (sem framework) |
 | Autoload | Composer PSR-4 |
-| Banco de dados | MySQL 8 (DigitalOcean Managed) |
-| Cache | Redis (Predis) — graceful degradation |
-| HTTP Client | cURL wrapper próprio com retry exponencial |
-| Criptografia | AES-256-CBC (OpenSSL) |
-| Servidor dev | `php -S localhost:8080 -t public` |
-| IA — texto | Google Gemini 2.5 Flash (`gemini-2.5-flash`) |
-| IA — imagem | Google Gemini Image (`gemini-2.5-flash-image`) |
-| Frontend | DaisyUI v4 + Tailwind CDN + marked.js |
+| Banco de dados | MySQL 8 (PDO puro, sem ORM) — migrado de SQLite (plano original) para suportar banco gerenciado (DigitalOcean, SSL) |
+| Cache | Redis (Predis) — graceful degradation, usado no sync de insights/receita |
+| HTTP Client | cURL wrapper próprio com retry exponencial e upload multipart |
+| Criptografia | AES-256-CBC (OpenSSL) para segredos em repouso (tokens Meta, chaves ActiveView, senha de app WordPress) |
+| Autenticação | Admin: `APP_API_KEY` estático. Usuário: Google OAuth 2.0, sessão de 24h (`session_token` em `users`) |
+| Agendamento | Windows Task Scheduler (uma task por conta) rodando `bin/sync.php` |
+| Servidor dev | PHP built-in server (`php -S localhost:8080 -t public`) |
+| IA — texto/análise | Google Gemini 2.5 Flash (`gemini-2.5-flash`) |
+| IA — imagem | Google Gemini Image, usado para imagem de destaque de posts WordPress |
+| Frontend | DaisyUI v4 + Tailwind CDN + marked.js, sem build step |
 
----
-
-## Arquitetura de Diretórios
+## Arquitetura de diretórios (como implementado)
 
 ```
-meta/
-├── bin/                        # Scripts CLI (sync, migrate, diagnóstico)
+meta_ai/
+├── bin/                        Scripts CLI: migrate.php, sync.php, e diagnósticos (test_*.php)
+│                                para experimentar direto contra a Graph API do Meta
 ├── config/
-│   └── config.php              # Configurações centrais (lê .env)
+│   └── config.php              Lê .env e monta o array de configuração central
 ├── database/
-│   └── migrations/             # SQLs versionados (001–009)
+│   └── migrations/             9 arquivos SQL numerados (accounts, executions,
+│                                campaign_reports, users, wordpress_sites,
+│                                wordpress_templates, user_accounts, campaign_drafts)
 ├── public/
-│   ├── index.php               # Front controller + roteador
-│   └── views/                  # Views PHP (layout + páginas)
-│       ├── layout.php
-│       ├── accounts.php
-│       ├── approvals.php
-│       ├── generator.php
-│       ├── login.php
-│       ├── my-campaigns.php
-│       ├── users.php
-│       └── wordpress/
-│           └── pages.php
+│   ├── index.php               Front controller único — instancia tudo (DI manual)
+│   │                            e registra todas as rotas (API + views)
+│   └── views/                  Templates PHP renderizados no servidor (DaisyUI/Tailwind)
 └── src/
-    ├── Controllers/
-    ├── Middleware/
-    ├── Models/
-    ├── Services/
-    └── Core/
+    ├── Controllers/            AccountController, CampaignGeneratorController,
+    │                           ApprovalController, AuthController, AiController, CampaignController
+    ├── Core/                   Database (PDO singleton), Encryption, Http (Request/Response/Router),
+    │                           HttpClient (cURL + retry), Cache (Redis), Exceptions
+    ├── Middleware/              AuthMiddleware — distingue contexto admin (API key) de usuário (OAuth)
+    ├── Models/                 Account, CampaignDraft, CampaignReport, User,
+    │                           WordPressSite, WordPressTemplate, ExecutionLog
+    └── Services/
+        ├── MetaAds/            CampaignService, CampaignCreatorService, InsightService, PixelService
+        ├── ActiveView/         RevenueService, SessionService, GamCustomReportService
+        ├── AI/                 GeminiService, CreativeGenerationService
+        ├── Report/             ConsolidationService (cálculo de ROAS)
+        └── WordPress/          WordPressService (publicação via REST API)
 ```
 
----
+## Módulos implementados
 
-## Módulos Implementados
+- **Contas** (`/accounts`): CRUD de contas Meta Ads + ActiveView, credenciais sensíveis criptografadas. Criação exige `meta_access_token` e `meta_account_id` válidos (validação adicionada após bug em que contas eram salvas sem credenciais e o wizard falhava silenciosamente ao buscar pixels/páginas).
+- **Gerador de campanhas** (`/generator`): wizard de 5 passos; busca pixels/eventos/páginas/conversões personalizadas ao vivo na Graph API por conta selecionada.
+- **Aprovação de campanhas** (`/approvals`, `/my-campaigns`): usuários OAuth submetem drafts (`campaign_drafts`, criativos em base64); admin aprova (cria de fato no Meta via `CampaignCreatorService`) ou rejeita com motivo, permitindo reenvio.
+- **Usuários** (`/users`): gestão de usuários Google OAuth e vínculo de quais contas cada um pode ver/usar (`user_accounts`).
+- **WordPress** (`/wordpress/pages`): geração de conteúdo (texto + imagem) com Gemini e publicação via REST API do WordPress, com templates reutilizáveis.
+- **Sync de ROAS** (`bin/sync.php`): cron por conta que busca insights do Meta + receita/sessões da ActiveView e persiste o ROAS calculado.
 
-### 1. Autenticação e Usuários
-- **Dois roles:** `admin` (API key) e `user` (Google OAuth)
-- Login admin: campo de senha na tela de login → cookie `_auth`
-- Login user: "Entrar com Google" → OAuth2 → cookie `_auth` com session_token (24h)
-- `AuthMiddleware::resolveContext()` — distingue admin vs user nos endpoints de API
-- `requireWebAuth()` em index.php — protege rotas web, seta `$GLOBALS['_authType']`, `_authUserId`, `_authEmail`
-- Tela `/users` (admin): lista usuários cadastrados, vincula/desvincula contas Meta por usuário
-- Variáveis `.env` necessárias: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+### Removido do roteador (arquivos ainda presentes, mas inacessíveis)
 
-### 2. Gerador de Campanhas Meta Ads
-- Formulário em 4 passos: dados da campanha → segmentação/orçamento → pixel/conversão → anúncios (imagem/vídeo)
-- **Admin:** cria campanha diretamente no Meta via `CampaignCreatorService`
-- **User:** envia para aprovação (salva como draft com criativos em base64)
-- Suporte a múltiplos anúncios por campanha, múltiplas plataformas e posicionamentos
-- Pré-preenchimento de draft rejeitado via `?draft_id=X` — campos rejeitados destacados em vermelho
+Uma versão anterior tinha dashboard de ROAS, listagem/filtro de campanhas e análise de campanhas por IA. As rotas foram removidas (`chore: remove dashboard, campaigns e IA routes e menu items`), mas os arquivos de view (`dashboard.php`, `campaigns.php`, `views/ia/analysis.php`) e `GeminiService::analyzeCampaigns` continuam no repositório como código morto — não vale confiar neles sem revisar antes de reativar.
 
-### 3. Sistema de Aprovação de Campanhas
-- **Fluxo:** User submete → Admin revisa → Aprova (publica no Meta) ou Rejeita (com campos + motivo)
-- Painel `/approvals` (admin): tabs Pendentes / Aprovadas / Rejeitadas, painel lateral de revisão
-- Revisão exibe: objetivo, orçamento, datas, países, idiomas, faixa etária, Advantage+ Audience, posicionamentos por plataforma, pixel, URL de destino, url_tags, preview de criativos (imagem/vídeo)
-- Rejeição: admin seleciona campos problemáticos (10 categorias) + escreve motivo
-- User vê resultado em `/my-campaigns` — pode editar e reenviar drafts rejeitados
+## Documentações dos Endpoints do Meta Ads
+-> https://developers.facebook.com/docs/?locale=pt_BR
 
-### 4. Gerador de Páginas WordPress
-- Geração de conteúdo HTML via Gemini (AIDA framework ou template customizado)
-- Geração de imagem destacada via `gemini-2.5-flash-image`
-- Publicação via REST API do WordPress (Basic Auth com Application Password)
-- Extração de template a partir de URL via Gemini
-- CRUD de sites WordPress e templates HTML
-
----
-
-## Banco de Dados (MySQL — DigitalOcean Managed)
-
-| Migration | Tabela | Descrição |
-|---|---|---|
-| 001 | `accounts` | Contas Meta+ActiveView com credenciais criptografadas |
-| 002 | `executions` | Log de execuções do sync |
-| 003 | `campaign_reports` | Dados diários de campanhas (spend, ROAS) |
-| 004 | `users` | Autenticação (email, name, google_id, role, session_token) |
-| 005 | `wordpress_sites` | Sites WP com senha criptografada |
-| 006 | `wordpress_templates` | Templates HTML para geração de posts |
-| 007 | `users` (ALTER) | Adiciona name, google_id, role, updated_at |
-| 008 | `user_accounts` | Pivot: vínculo usuário ↔ conta Meta |
-| 009 | `campaign_drafts` | Campanhas aguardando aprovação (payload + criativos JSON) |
-
-**Atenção:** `ANSI_QUOTES` ativo no servidor — usar aspas simples para valores string em SQL (aspas duplas são tratadas como identificadores de coluna).
-
----
-
-## Rotas
-
-### Web (HTML)
-| Rota | Acesso | Descrição |
-|---|---|---|
-| `/login` | público | Tela de login |
-| `/accounts` | admin | Gerenciar contas Meta |
-| `/users` | admin | Gerenciar usuários e vínculos de conta |
-| `/generator` | ambos | Gerador de campanhas |
-| `/approvals` | admin | Painel de aprovação |
-| `/my-campaigns` | user | Campanhas enviadas pelo usuário |
-| `/wordpress/pages` | ambos | Gerador de páginas WordPress |
-
-### API
-| Rota | Método | Acesso | Descrição |
-|---|---|---|---|
-| `/oauth/google` | GET | público | Redireciona para Google OAuth |
-| `/oauth/callback` | GET | público | Callback OAuth |
-| `/api/auth/admin-login` | POST | público | Login admin por API key |
-| `/api/accounts` | GET/POST/PUT/DELETE | admin | CRUD contas |
-| `/api/users` | GET | admin | Lista usuários |
-| `/api/users/{id}/accounts` | PUT | admin | Vincula contas ao usuário |
-| `/api/users/{id}` | DELETE | admin | Remove usuário |
-| `/api/generator/create` | POST | admin | Cria campanha direto no Meta |
-| `/api/generator/submit` | POST | user | Envia campanha para aprovação |
-| `/api/approvals` | GET | admin | Lista todos os drafts |
-| `/api/approvals/pending-count` | GET | admin | Contagem de pendentes (badge) |
-| `/api/approvals/{id}` | GET | admin | Detalhes de um draft |
-| `/api/approvals/{id}/approve` | POST | admin | Aprova e cria no Meta |
-| `/api/approvals/{id}/reject` | POST | admin | Rejeita com campos + motivo |
-| `/api/my-campaigns` | GET | user | Campanhas do usuário logado |
-| `/api/my-campaigns/{id}` | GET | ambos | Detalhes de um draft |
-| `/api/my-campaigns/{id}/resubmit` | POST | user | Resubmete draft rejeitado |
-| `/api/wordpress/sites` | GET/POST/PUT/DELETE | admin | CRUD sites WordPress |
-| `/api/wordpress/templates` | GET/POST/PUT/DELETE | admin | CRUD templates |
-| `/api/wordpress/generate` | POST | admin | Gera HTML com IA |
-| `/api/wordpress/generate-featured-image` | POST | admin | Gera imagem com IA |
-| `/api/wordpress/pages` | POST | admin | Publica no WordPress |
-
----
-
-## Observações Técnicas
-
-**CampaignCreatorService:**
-- `postMultipart()` em todos os métodos (API Meta exige form-data)
-- `bid_strategy = LOWEST_COST_WITHOUT_CAP` explícito
-- Posições por plataforma só enviadas se a plataforma estiver em `publisher_platforms`
-- `custom_conversion_id` tem prioridade sobre `pixel_event` no `promoted_object`
-
-**Placements válidos:**
-- `facebook_positions`: `feed`, `facebook_reels`, `story`, `marketplace`, `video_feeds`, `right_hand_column`, `search`, `instream_video`
-- `instagram_positions`: `stream`, `reels`, `story`, `explore`, `explore_home`, `profile_feed`
-- `messenger_positions`: `sponsored_messages`, `story`
-
-**Bloqueios conhecidos na conta `act_834518578730293`:**
-- `facebook_reels` bloqueado (sem permissão `business_management`) — Instagram Reels funciona
-- `instagram_user_id: 17841469630403537` pertence à conta pxmind — não usar em outras ad accounts
-
----
-
-## Documentações de Referência
-
-- Meta Ads API: https://developers.facebook.com/docs/?locale=pt_BR
-- ActiveView Services: `C:\projetos\AI\crons\src\Services\ActiveView` (somente leitura)
+## Documentações dos Endpoints da Active View
+-> C:\projetos\AI\crons\src\Services\ActiveView
+-> Apenas leia não altere nada nesses arquivos é proibido alterar.
