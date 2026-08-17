@@ -43,6 +43,8 @@ use App\Services\AI\CreativeAnalysisService;
 use App\Services\AI\CreativeGenerationService;
 use App\Services\AI\GeminiService;
 use App\Services\AI\VeoVideoService;
+use App\Services\AI\VertexAuthService;
+use App\Services\AI\VertexConfig;
 use App\Services\WordPress\WordPressService;
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
@@ -55,15 +57,21 @@ $auth   = new AuthMiddleware($config['api_key']);
 
 $GLOBALS['_httpConfig'] = $config['retry'];
 
+$vertexAuth = VertexConfig::isEnabled($config)
+    ? new VertexAuthService($config['vertex'], $http, $cache)
+    : null;
+$vertexProjectId = $config['vertex']['project_id'] ?? '';
+$vertexLocation  = $config['vertex']['location']   ?? 'global';
+
 $accountModel   = new Account($enc);
 $reportModel    = new CampaignReport();
 $draftModel     = new CampaignDraft();
-$gemini         = new GeminiService($config['gemini'], $http);
+$gemini         = new GeminiService($config['gemini'], $http, $vertexAuth, $vertexProjectId, $vertexLocation);
 $wpSiteModel    = new WordPressSite($enc);
 $wpTplModel     = new WordPressTemplate();
 $wpService      = new WordPressService();
-$creativeGen    = new CreativeGenerationService($config['gemini']['api_key'], $http);
-$creativeAnalysis = new CreativeAnalysisService($config['gemini'], $http);
+$creativeGen    = new CreativeGenerationService($config['gemini']['api_key'], $http, $vertexAuth, $vertexProjectId, $vertexLocation);
+$creativeAnalysis = new CreativeAnalysisService($config['gemini'], $http, $vertexAuth, $vertexProjectId, $vertexLocation);
 $veoService       = new VeoVideoService($config['gemini']['api_key'], $http);
 $creativeAgent    = new CreativeAgentService($creativeAnalysis, $creativeGen, $veoService);
 

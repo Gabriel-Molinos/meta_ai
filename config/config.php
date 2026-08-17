@@ -49,6 +49,12 @@ return [
         'timeout' => 180,
     ],
 
+    'vertex' => [
+        'project_id' => $env('VERTEX_PROJECT_ID', 'pixel-ads-ia'),
+        'location'   => $env('VERTEX_LOCATION', 'global'),
+        'key_path'   => $env('VERTEX_SERVICE_ACCOUNT_KEY_PATH', __DIR__ . '/../pixel-ads-ia-0543acdea262.json'),
+    ],
+
     'redis' => [
         'host' => $env('REDIS_HOST', '127.0.0.1'),
         'port' => (int) $env('REDIS_PORT', '6379'),

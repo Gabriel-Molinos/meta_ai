@@ -1,5 +1,6 @@
 # Ambiente e segredos
 .env
+pixel-ads-ia-0543acdea262.json
 
 # Banco de dados
 database/*.sqlite

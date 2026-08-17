@@ -14,11 +14,38 @@ class GeminiService
     private string $model;
     private int    $timeout;
 
-    public function __construct(array $config, private readonly HttpClient $http)
-    {
+    public function __construct(
+        array $config,
+        private readonly HttpClient $http,
+        private readonly ?VertexAuthService $vertexAuth = null,
+        private readonly string $vertexProjectId = '',
+        private readonly string $vertexLocation = 'global',
+    ) {
         $this->apiKey  = $config['api_key'];
         $this->model   = $config['model']   ?? 'gemini-2.5-flash';
         $this->timeout = (int) ($config['timeout'] ?? 180);
+    }
+
+    /**
+     * Resolve URL e headers de autenticação — Vertex AI (service account) quando
+     * configurado, com fallback para a API pública do Gemini (x-goog-api-key).
+     *
+     * @return array{url: string, headers: array<string,string>}
+     */
+    private function buildRequestTarget(string $action = 'generateContent'): array
+    {
+        if ($this->vertexAuth !== null) {
+            $url = $this->vertexLocation === 'global'
+                ? "https://aiplatform.googleapis.com/v1/projects/{$this->vertexProjectId}/locations/global/publishers/google/models/{$this->model}:{$action}"
+                : "https://{$this->vertexLocation}-aiplatform.googleapis.com/v1/projects/{$this->vertexProjectId}/locations/{$this->vertexLocation}/publishers/google/models/{$this->model}:{$action}";
+
+            return ['url' => $url, 'headers' => ['Authorization' => 'Bearer ' . $this->vertexAuth->getAccessToken()]];
+        }
+
+        return [
+            'url'     => self::BASE_URL . '/' . $this->model . ':' . $action,
+            'headers' => ['x-goog-api-key' => $this->apiKey],
+        ];
     }
 
     /**
@@ -30,11 +57,10 @@ class GeminiService
             return 'Nenhum dado de campanha disponível para análise.';
         }
 
-        $url     = self::BASE_URL . '/' . $this->model . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
+        $target  = $this->buildRequestTarget();
         $body    = [
             'contents' => [
-                ['parts' => [['text' => $this->buildCampaignPrompt($campaigns, $days)]]]
+                ['role' => 'user', 'parts' => [['text' => $this->buildCampaignPrompt($campaigns, $days)]]]
             ],
             'generationConfig' => [
                 'temperature'     => 0.3,
@@ -43,7 +69,7 @@ class GeminiService
             ],
         ];
 
-        $response = $this->http->post($url, $headers, $body, $this->timeout);
+        $response = $this->http->post($target['url'], $target['headers'], $body, $this->timeout);
 
         return $response['candidates'][0]['content']['parts'][0]['text']
             ?? 'Análise indisponível. Verifique a configuração da API Gemini.';
@@ -58,11 +84,10 @@ class GeminiService
             return [];
         }
 
-        $url     = self::BASE_URL . '/' . $this->model . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
+        $target  = $this->buildRequestTarget();
         $body    = [
             'contents' => [
-                ['parts' => [['text' => $this->buildTrendPrompt($campaigns, $days)]]]
+                ['role' => 'user', 'parts' => [['text' => $this->buildTrendPrompt($campaigns, $days)]]]
             ],
             'generationConfig' => [
                 'temperature'      => 0.2,
@@ -72,7 +97,7 @@ class GeminiService
             ],
         ];
 
-        $response = $this->http->post($url, $headers, $body, $this->timeout);
+        $response = $this->http->post($target['url'], $target['headers'], $body, $this->timeout);
         $text     = $response['candidates'][0]['content']['parts'][0]['text'] ?? '[]';
 
         return json_decode($text, true) ?? [];
@@ -123,11 +148,10 @@ class GeminiService
         array   $components = [],
         ?string $htmlTemplate = null
     ): string {
-        $url     = self::BASE_URL . '/' . $this->model . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
+        $target  = $this->buildRequestTarget();
         $body    = [
             'contents' => [
-                ['parts' => [['text' => $this->buildBlogContentPrompt(
+                ['role' => 'user', 'parts' => [['text' => $this->buildBlogContentPrompt(
                     $topic, $language, $wordCount, $buttons,
                     $includeHeaderButtons, $includeTextBeforeButtons,
                     $components, $htmlTemplate
@@ -140,7 +164,7 @@ class GeminiService
             ],
         ];
 
-        $response = $this->http->post($url, $headers, $body, $this->timeout);
+        $response = $this->http->post($target['url'], $target['headers'], $body, $this->timeout);
         $html     = $response['candidates'][0]['content']['parts'][0]['text'] ?? '';
 
         $html = preg_replace('/^```html?\s*/i', '', trim($html));
@@ -252,11 +276,10 @@ YOUR TASKS — follow every rule exactly:
 {$html}
 PROMPT;
 
-        $apiUrl  = self::BASE_URL . '/' . $this->model . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
+        $target  = $this->buildRequestTarget();
         $body    = [
             'contents' => [
-                ['parts' => [['text' => $prompt]]]
+                ['role' => 'user', 'parts' => [['text' => $prompt]]]
             ],
             'generationConfig' => [
                 'temperature'     => 0.1,
@@ -265,7 +288,7 @@ PROMPT;
             ],
         ];
 
-        $response = $this->http->post($apiUrl, $headers, $body, 120);
+        $response = $this->http->post($target['url'], $target['headers'], $body, 120);
         $result   = $response['candidates'][0]['content']['parts'][0]['text'] ?? '';
 
         $result = preg_replace('/^```html?\s*/i', '', trim($result));

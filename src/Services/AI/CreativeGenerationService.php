@@ -12,9 +12,34 @@ class CreativeGenerationService
     private const BASE_URL    = 'https://generativelanguage.googleapis.com/v1beta/models';
 
     public function __construct(
-        private readonly string     $apiKey,
-        private readonly HttpClient $http
+        private readonly string             $apiKey,
+        private readonly HttpClient         $http,
+        private readonly ?VertexAuthService $vertexAuth = null,
+        private readonly string             $vertexProjectId = '',
+        private readonly string             $vertexLocation = 'global',
     ) {}
+
+    /**
+     * Resolve URL e headers de autenticação — Vertex AI (service account) quando
+     * configurado, com fallback para a API pública do Gemini (x-goog-api-key).
+     *
+     * @return array{url: string, headers: array<string,string>}
+     */
+    private function buildRequestTarget(string $action = 'generateContent'): array
+    {
+        if ($this->vertexAuth !== null) {
+            $url = $this->vertexLocation === 'global'
+                ? "https://aiplatform.googleapis.com/v1/projects/{$this->vertexProjectId}/locations/global/publishers/google/models/" . self::IMAGE_MODEL . ":{$action}"
+                : "https://{$this->vertexLocation}-aiplatform.googleapis.com/v1/projects/{$this->vertexProjectId}/locations/{$this->vertexLocation}/publishers/google/models/" . self::IMAGE_MODEL . ":{$action}";
+
+            return ['url' => $url, 'headers' => ['Authorization' => 'Bearer ' . $this->vertexAuth->getAccessToken()]];
+        }
+
+        return [
+            'url'     => self::BASE_URL . '/' . self::IMAGE_MODEL . ':' . $action,
+            'headers' => ['x-goog-api-key' => $this->apiKey],
+        ];
+    }
 
     /**
      * Generates a featured blog post image (landscape, editorial/stock-photo style).
@@ -23,9 +48,7 @@ class CreativeGenerationService
      */
     public function generateFeaturedImage(string $topic, string $title = ''): array
     {
-        $url     = self::BASE_URL . '/' . self::IMAGE_MODEL . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
-
+        $target    = $this->buildRequestTarget();
         $titleLine = $title !== '' ? "\nPost title: \"{$title}\"" : '';
 
         $prompt = <<<PROMPT
@@ -44,11 +67,11 @@ Requirements:
 PROMPT;
 
         $body = [
-            'contents'         => [['parts' => [['text' => $prompt]]]],
+            'contents'         => [['role' => 'user', 'parts' => [['text' => $prompt]]]],
             'generationConfig' => ['responseModalities' => ['IMAGE'], 'temperature' => 1.0],
         ];
 
-        $response = $this->http->post($url, $headers, $body, 90);
+        $response = $this->http->post($target['url'], $target['headers'], $body, 90);
         $part     = $response['candidates'][0]['content']['parts'][0] ?? null;
 
         if (isset($part['inlineData']['data'])) {
@@ -70,8 +93,7 @@ PROMPT;
      */
     public function generateAdCreativeImage(string $prompt, string $aspectRatio, ?array $referenceImage = null): array
     {
-        $url     = self::BASE_URL . '/' . self::IMAGE_MODEL . ':generateContent';
-        $headers = ['x-goog-api-key' => $this->apiKey];
+        $target = $this->buildRequestTarget();
 
         $parts = [];
         if ($referenceImage !== null) {
@@ -83,7 +105,7 @@ PROMPT;
         $parts[] = ['text' => $prompt];
 
         $body = [
-            'contents'         => [['parts' => $parts]],
+            'contents'         => [['role' => 'user', 'parts' => $parts]],
             'generationConfig' => [
                 'responseModalities' => ['IMAGE'],
                 'temperature'        => 1.0,
@@ -91,7 +113,7 @@ PROMPT;
             ],
         ];
 
-        $response = $this->http->post($url, $headers, $body, 90);
+        $response = $this->http->post($target['url'], $target['headers'], $body, 90);
         $part     = $response['candidates'][0]['content']['parts'][0] ?? null;
 
         if (isset($part['inlineData']['data'])) {
