@@ -1,17 +1,18 @@
 # Plano Do Meta Ads + Active View Integration API
 
-> Atualizado em 2026-07-28 para refletir o estado real do sistema (v1 era um plano inicial focado só em dashboard de ROAS; o escopo cresceu para gerador de campanhas com aprovação, gestão de usuários e módulo WordPress — ver histórico de commits).
+> Atualizado em 2026-08-18 para refletir o estado real do sistema (v1 era um plano inicial focado só em dashboard de ROAS; o escopo cresceu para gerador de campanhas com aprovação, gestão de usuários, módulo WordPress e agente de IA para criativos — ver histórico de commits).
 
 ## Persona
 Você será um desenvolvedor full stack web, capaz de compreender facilmente as integrações webs via API.
 
 ## Visão Geral
 
-Sistema interno com três frentes:
+Sistema interno com quatro frentes:
 
-1. **Gerador de campanhas Meta Ads** — wizard guiado (5 passos) que monta campanha → adset → creative → ad. Usuários não-admin não publicam direto: submetem um *draft* que passa por aprovação de um admin antes de ir ao ar.
-2. **Consolidação de ROAS** — cruza métricas do **Meta Ads** com dados de receita e sessões da **ActiveView**, calcula ROAS por campanha e persiste o histórico no MySQL (`bin/sync.php`, agendado via Windows Task Scheduler, uma task por conta).
-3. **Geração de conteúdo WordPress** — cria posts/páginas com Gemini (texto + imagem de destaque) e publica em sites WordPress externos via REST API (Application Password).
+1. **Gerador de campanhas Meta Ads** — wizard guiado (5 passos) que monta campanha → adset → creative → ad. Usuários não-admin não publicam direto: submetem um *draft* que passa por aprovação de um admin antes de ir ao ar. Cada anúncio pode ser imagem única, vídeo único, **carrossel** (2-5 vídeos em cards lado a lado) ou **Dynamic Creative** (2-10 vídeos num único anúncio, o Meta testa/roda automaticamente).
+2. **Agente de IA para criativos** — gera imagem/vídeo de anúncio a partir de um exemplo (imagem, vídeo, texto ou HTML) enviado pelo usuário, com recomendação automática de formato de mídia.
+3. **Consolidação de ROAS** — cruza métricas do **Meta Ads** com dados de receita e sessões da **ActiveView**, calcula ROAS por campanha e persiste o histórico no MySQL (`bin/sync.php`, agendado via Windows Task Scheduler, uma task por conta).
+4. **Geração de conteúdo WordPress** — cria posts/páginas com Gemini (texto + imagem de destaque) e publica em sites WordPress externos via REST API (Application Password).
 
 Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas no banco. Interface Web em MVC feito à mão (sem framework), autenticação dupla (admin por token estático, usuários por Google OAuth).
 
@@ -28,8 +29,9 @@ Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas n
 | Autenticação | Admin: `APP_API_KEY` estático. Usuário: Google OAuth 2.0, sessão de 24h (`session_token` em `users`) |
 | Agendamento | Windows Task Scheduler (uma task por conta) rodando `bin/sync.php` |
 | Servidor dev | PHP built-in server (`php -S localhost:8080 -t public`) |
-| IA — texto/análise | Google Gemini 2.5 Flash (`gemini-2.5-flash`) |
-| IA — imagem | Google Gemini Image, usado para imagem de destaque de posts WordPress |
+| IA — texto/análise | Google Gemini 2.5 Flash (`gemini-2.5-flash`), via **Vertex AI** (JWT hand-rolled, fallback automático para API pública se credencial Vertex não configurada) |
+| IA — imagem | `gemini-2.5-flash-image`, via Vertex AI com o mesmo fallback |
+| IA — vídeo | Bloqueada: projeto GCP não tem acesso ao Veo liberado no Model Garden — `VeoVideoService` continua na API pública |
 | Frontend | DaisyUI v4 + Tailwind CDN + marked.js, sem build step |
 
 ## Arquitetura de diretórios (como implementado)
@@ -50,7 +52,8 @@ meta_ai/
 │   └── views/                  Templates PHP renderizados no servidor (DaisyUI/Tailwind)
 └── src/
     ├── Controllers/            AccountController, CampaignGeneratorController,
-    │                           ApprovalController, AuthController, AiController, CampaignController
+    │                           ApprovalController, AuthController, AiController,
+    │                           CampaignController, CreativeAgentController
     ├── Core/                   Database (PDO singleton), Encryption, Http (Request/Response/Router),
     │                           HttpClient (cURL + retry), Cache (Redis), Exceptions
     ├── Middleware/              AuthMiddleware — distingue contexto admin (API key) de usuário (OAuth)
@@ -59,7 +62,10 @@ meta_ai/
     └── Services/
         ├── MetaAds/            CampaignService, CampaignCreatorService, InsightService, PixelService
         ├── ActiveView/         RevenueService, SessionService, GamCustomReportService
-        ├── AI/                 GeminiService, CreativeGenerationService
+        ├── AI/                 GeminiService (texto), CreativeAnalysisService (análise multimodal),
+        │                       CreativeGenerationService (imagem), CreativeAgentService (orquestra
+        │                       geração de criativo de anúncio), VeoVideoService (vídeo, API pública),
+        │                       VertexAuthService (JWT p/ Vertex), VertexConfig (Vertex vs fallback)
         ├── Report/             ConsolidationService (cálculo de ROAS)
         └── WordPress/          WordPressService (publicação via REST API)
 ```
@@ -67,8 +73,9 @@ meta_ai/
 ## Módulos implementados
 
 - **Contas** (`/accounts`): CRUD de contas Meta Ads + ActiveView, credenciais sensíveis criptografadas. Criação exige `meta_access_token` e `meta_account_id` válidos (validação adicionada após bug em que contas eram salvas sem credenciais e o wizard falhava silenciosamente ao buscar pixels/páginas).
-- **Gerador de campanhas** (`/generator`): wizard de 5 passos; busca pixels/eventos/páginas/conversões personalizadas ao vivo na Graph API por conta selecionada.
-- **Aprovação de campanhas** (`/approvals`, `/my-campaigns`): usuários OAuth submetem drafts (`campaign_drafts`, criativos em base64); admin aprova (cria de fato no Meta via `CampaignCreatorService`) ou rejeita com motivo, permitindo reenvio.
+- **Gerador de campanhas** (`/generator`): wizard de 5 passos; busca pixels/eventos/páginas/conversões personalizadas ao vivo na Graph API por conta selecionada. No Passo 4, cada anúncio pode ser imagem, vídeo único, carrossel (2-5 vídeos) ou Dynamic Creative (2-10 vídeos, o Meta escolhe/testa automaticamente) — ou gerado por IA a partir de um exemplo enviado pelo usuário.
+- **Agente de IA para criativos**: dado um exemplo (imagem, vídeo, texto ou HTML), analisa e recomenda um formato de mídia, gera o criativo (imagem via Gemini/Vertex, vídeo via Veo quando liberado) e alimenta direto o card do anúncio no gerador.
+- **Aprovação de campanhas** (`/approvals`, `/my-campaigns`): usuários OAuth submetem drafts (`campaign_drafts`, criativos em base64 — inclusive múltiplos arquivos por anúncio no caso de carrossel/Dynamic Creative); admin aprova (cria de fato no Meta via `CampaignCreatorService`) ou rejeita com motivo, permitindo reenvio.
 - **Usuários** (`/users`): gestão de usuários Google OAuth e vínculo de quais contas cada um pode ver/usar (`user_accounts`).
 - **WordPress** (`/wordpress/pages`): geração de conteúdo (texto + imagem) com Gemini e publicação via REST API do WordPress, com templates reutilizáveis.
 - **Sync de ROAS** (`bin/sync.php`): cron por conta que busca insights do Meta + receita/sessões da ActiveView e persiste o ROAS calculado.
