@@ -98,10 +98,10 @@ class CampaignCreatorService
             $targeting['locales'] = array_map('intval', (array) $p['locales']);
         }
 
-        // Placements — audience_network bloqueado no servidor independente do que vier do frontend
+        // Placements — audience_network e messenger bloqueados no servidor independente do que vier do frontend
         $platforms = array_values(array_filter(
             (array) ($p['publisher_platforms'] ?? ['facebook', 'instagram']),
-            fn($pl) => $pl !== 'audience_network'
+            fn($pl) => $pl !== 'audience_network' && $pl !== 'messenger'
         ));
         $targeting['publisher_platforms'] = $platforms ?: ['facebook', 'instagram'];
         if (!empty($p['facebook_positions']) && in_array('facebook', $targeting['publisher_platforms'])) {
@@ -116,9 +116,6 @@ class CampaignCreatorService
         }
         if (!empty($p['instagram_positions']) && in_array('instagram', $targeting['publisher_platforms'])) {
             $targeting['instagram_positions'] = array_values((array) $p['instagram_positions']);
-        }
-        if (!empty($p['messenger_positions']) && in_array('messenger', $targeting['publisher_platforms'])) {
-            $targeting['messenger_positions'] = array_values((array) $p['messenger_positions']);
         }
 
         $fields = [

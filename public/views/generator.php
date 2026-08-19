@@ -102,7 +102,6 @@ const state = {
   publisher_platforms: ['facebook','instagram'],
   facebook_positions:  ['feed','facebook_reels','story'],
   instagram_positions: ['stream','reels','story'],
-  messenger_positions: [],
   pixel_id: '', pixel_event: '', custom_conversion_id: '', page_id: '', destination_url: '',
   custom_event_str: '', instagram_user_id: '',
   ads: [],
@@ -168,7 +167,6 @@ function saveStep(n){
     state.publisher_platforms = [...document.querySelectorAll('.chk-platform:checked')].map(c=>c.value);
     state.facebook_positions  = [...document.querySelectorAll('.chk-fb-pos:checked')].map(c=>c.value);
     state.instagram_positions = [...document.querySelectorAll('.chk-ig-pos:checked')].map(c=>c.value);
-    state.messenger_positions = [...document.querySelectorAll('.chk-ms-pos:checked')].map(c=>c.value);
   } else if(n===3){
     state.pixel_id            = document.getElementById('s3_pixel').value;
     state.pixel_event         = document.getElementById('s3_event').value;
@@ -304,7 +302,7 @@ function onPixelChange(){
 
 // ── Toggle posicionamentos por plataforma ─────────────────────────────────────
 function togglePlatformPositions(chk, posClass){
-  const platformMap = {'fb-pos':'facebook','ig-pos':'instagram','ms-pos':'messenger'};
+  const platformMap = {'fb-pos':'facebook','ig-pos':'instagram'};
   const container = document.getElementById('positions-' + platformMap[posClass]);
   if(!container) return;
   if(chk.checked){
@@ -893,11 +891,10 @@ function pollAiVideo(id){
 
 // ── Passo 5: Revisão ──────────────────────────────────────────────────────────
 const PLACEMENT_LABELS = {
-  facebook: 'Facebook', instagram: 'Instagram', messenger: 'Messenger',
+  facebook: 'Facebook', instagram: 'Instagram',
   feed: 'Feed', reels: 'Reels', facebook_reels: 'Reels', story: 'Stories', stream: 'Feed',
-  marketplace: 'Marketplace', video_feeds: 'Vídeos', right_hand_column: 'Coluna Direita',
+  marketplace: 'Marketplace', right_hand_column: 'Coluna Direita',
   search: 'Busca', instream_video: 'In-stream', explore: 'Explorar',
-  sponsored_messages: 'Caixa de Entrada',
 };
 function formatPlacements(){
   const parts=[];
@@ -905,8 +902,6 @@ function formatPlacements(){
     parts.push('FB: '+state.facebook_positions.map(p=>PLACEMENT_LABELS[p]||p).join(', '));
   if(state.publisher_platforms.includes('instagram')&&state.instagram_positions.length)
     parts.push('IG: '+state.instagram_positions.map(p=>PLACEMENT_LABELS[p]||p).join(', '));
-  if(state.publisher_platforms.includes('messenger')&&state.messenger_positions.length)
-    parts.push('Msg: '+state.messenger_positions.map(p=>PLACEMENT_LABELS[p]||p).join(', '));
   return parts.join(' | ')||'—';
 }
 
@@ -1009,7 +1004,6 @@ async function createCampaign(){
   state.publisher_platforms.forEach(p=>formData.append('publisher_platforms[]',p));
   state.facebook_positions.forEach(p=>formData.append('facebook_positions[]',p));
   state.instagram_positions.forEach(p=>formData.append('instagram_positions[]',p));
-  state.messenger_positions.forEach(p=>formData.append('messenger_positions[]',p));
 
   state.ads.forEach((ad,i)=>{
     formData.append(`ads[${i}][name]`,             ad.name);
@@ -1112,7 +1106,6 @@ async function loadDraft(id){
     if(p.publisher_platforms) document.querySelectorAll('.chk-platform').forEach(c=>{c.checked=p.publisher_platforms.includes(c.value);});
     if(p.facebook_positions) document.querySelectorAll('.chk-fb-pos').forEach(c=>{c.checked=p.facebook_positions.includes(c.value);});
     if(p.instagram_positions) document.querySelectorAll('.chk-ig-pos').forEach(c=>{c.checked=p.instagram_positions.includes(c.value);});
-    if(p.messenger_positions) document.querySelectorAll('.chk-ms-pos').forEach(c=>{c.checked=p.messenger_positions.includes(c.value);});
 
     // Step 3 — carrega pixel/pages depois de definir account_key
     state.account_key = p.account_key || '';
@@ -1386,23 +1379,6 @@ ob_start();
               <label class="flex items-center gap-1.5 cursor-pointer text-sm hover:bg-base-200 rounded px-1 py-0.5">
                 <input type="checkbox" class="chk-ig-pos checkbox checkbox-xs checkbox-secondary" value="<?= $v ?>"
                   <?= in_array($v, ['stream','reels','story']) ? 'checked' : '' ?>>
-                <span><?= $l ?></span>
-              </label>
-              <?php endforeach; ?>
-            </div>
-          </div>
-
-          <!-- Messenger -->
-          <div>
-            <div class="flex items-center gap-2 mb-1.5">
-              <input type="checkbox" class="chk-platform checkbox checkbox-xs checkbox-primary" value="messenger"
-                     onchange="togglePlatformPositions(this,'ms-pos')">
-              <span class="text-sm font-semibold">Messenger</span>
-            </div>
-            <div id="positions-messenger" class="pl-5 grid grid-cols-2 sm:grid-cols-4 gap-1 opacity-40 pointer-events-none">
-              <?php foreach ([['sponsored_messages','Caixa de Entrada'],['story','Stories']] as [$v,$l]): ?>
-              <label class="flex items-center gap-1.5 cursor-pointer text-sm hover:bg-base-200 rounded px-1 py-0.5">
-                <input type="checkbox" class="chk-ms-pos checkbox checkbox-xs checkbox-secondary" value="<?= $v ?>">
                 <span><?= $l ?></span>
               </label>
               <?php endforeach; ?>
