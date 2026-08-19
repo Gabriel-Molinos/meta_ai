@@ -63,6 +63,14 @@ const PLACEMENTS = {
     { label: 'Feed (vertical)',    dims: '1080 × 1350 px — 4:5 — até 240 s' },
     { label: 'Reels / Stories',   dims: '1080 × 1920 px — 9:16 — até 90 s' },
   ],
+  carousel: [
+    { label: 'Cada card (vídeo)',  dims: '1080 × 1080 px — 1:1 — até 240 s por vídeo' },
+    { label: 'Quantidade de cards', dims: '2 a 5 vídeos por anúncio' },
+  ],
+  dynamic: [
+    { label: 'Cada vídeo',          dims: '1080 × 1080 px — 1:1 — até 240 s por vídeo' },
+    { label: 'Quantidade de vídeos', dims: '2 a 10 vídeos — o Meta testa e prioriza o de melhor performance' },
+  ],
 };
 
 // Tamanhos Meta disponíveis para o Agente de IA — o Gemini image cobre as 4 proporções
@@ -193,7 +201,11 @@ function validateStep(n){
     if(!state.ads.length){ alert('Adicione ao menos um anúncio.'); return false; }
     for(const ad of state.ads){
       if(!ad.name.trim()){ alert('Preencha o nome de todos os anúncios.'); return false; }
-      if(!ad.file){ alert(`Adicione o arquivo de mídia ao anúncio "${ad.name||'sem nome'}".`); return false; }
+      if(ad.media_type==='carousel'){
+        if(ad.files.length<2){ alert(`Adicione ao menos 2 vídeos ao carrossel do anúncio "${ad.name||'sem nome'}".`); return false; }
+      } else if(ad.media_type==='dynamic'){
+        if(ad.files.length<2){ alert(`Adicione ao menos 2 vídeos ao anúncio de vários vídeos "${ad.name||'sem nome'}".`); return false; }
+      } else if(!ad.file){ alert(`Adicione o arquivo de mídia ao anúncio "${ad.name||'sem nome'}".`); return false; }
     }
   }
   return true;
@@ -311,12 +323,20 @@ function filterCountries(){
   });
 }
 
+// ── Filtro de idiomas ──────────────────────────────────────────────────────────
+function filterLocales(){
+  const q=document.getElementById('languageSearch').value.toLowerCase();
+  document.querySelectorAll('.locale-item').forEach(el=>{
+    el.classList.toggle('hidden', q&&!el.dataset.label.toLowerCase().includes(q));
+  });
+}
+
 // ── Passo 4: Gerenciar anúncios ────────────────────────────────────────────────
 let adIdCounter=0;
 function addAd(){
   const id=adIdCounter++;
   state.ads.push({
-    id,name:'',primary_text:'',headline:'',link_description:'',url_tags:'',cta:'LEARN_MORE',media_type:'image',file:null,preview:null,
+    id,name:'',primary_text:'',headline:'',link_description:'',url_tags:'',cta:'LEARN_MORE',media_type:'image',file:null,preview:null,files:[],
     source_mode:'upload',           // 'upload' | 'ai'
     ai_example_type:'image',        // 'image'|'video'|'text'|'html'
     ai_example_file:null, ai_example_preview:null, ai_example_text:'',
@@ -353,6 +373,25 @@ function handleFile(id,input){
       ? `<video src="${ad.preview}" class="max-h-32 rounded" controls muted></video>`
       : `<img src="${ad.preview}" class="max-h-32 rounded object-contain">`;
   }
+}
+
+function handleCarouselFiles(id,input){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad||!input.files.length) return;
+  const max=ad.media_type==='dynamic'?10:5;
+  for(const f of input.files){
+    if(ad.files.length>=max) break;
+    ad.files.push({file:f, preview:URL.createObjectURL(f)});
+  }
+  input.value='';
+  renderAdCard(id);
+}
+
+function removeCarouselFile(id,idx){
+  const ad=state.ads.find(a=>a.id===id);
+  if(!ad) return;
+  ad.files.splice(idx,1);
+  renderAdCard(id);
 }
 
 function renderAds(){
@@ -425,13 +464,24 @@ function buildAdCard(ad){
                      ${ad.media_type==='video'?'checked':''} onchange="updateAd(${ad.id},'media_type','video')">
               <span class="text-sm">Vídeo</span>
             </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" name="mt_${ad.id}" value="carousel" class="radio radio-sm"
+                     ${ad.media_type==='carousel'?'checked':''} onchange="updateAd(${ad.id},'media_type','carousel')">
+              <span class="text-sm">Carrossel (vídeos)</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" name="mt_${ad.id}" value="dynamic" class="radio radio-sm"
+                     ${ad.media_type==='dynamic'?'checked':''} onchange="updateAd(${ad.id},'media_type','dynamic')">
+              <span class="text-sm">Vários vídeos (mesmo anúncio)</span>
+            </label>
           </div>
         </div>
       </div>
       <div class="alert alert-info py-2 text-xs">
         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        <div><strong>Tamanhos recomendados (${ad.media_type==='video'?'Vídeo':'Imagem'}):</strong><ul class="mt-1 space-y-0.5">${dimsHtml}</ul></div>
+        <div><strong>Tamanhos recomendados (${ad.media_type==='video'?'Vídeo':ad.media_type==='carousel'?'Carrossel':ad.media_type==='dynamic'?'Vários vídeos':'Imagem'}):</strong><ul class="mt-1 space-y-0.5">${dimsHtml}</ul></div>
       </div>
+      ${(ad.media_type==='carousel'||ad.media_type==='dynamic') ? buildMultiVideoUploader(ad) : `
       <div class="flex gap-2">
         <button type="button" onclick="toggleAdSourceMode(${ad.id},'upload')"
                 class="btn btn-xs ${ad.source_mode==='upload'?'btn-primary':'btn-ghost border border-base-300'}">📁 Enviar arquivo</button>
@@ -451,7 +501,35 @@ function buildAdCard(ad){
             : `<div class="text-sm opacity-50"><div class="text-3xl mb-1">${ad.media_type==='video'?'🎬':'🖼'}</div>Clique para selecionar ${ad.media_type==='video'?'vídeo':'imagem'}</div>`}
         </div>
       </div>`}
+      `}
     </div>
+  </div>`;
+}
+
+function buildMultiVideoUploader(ad){
+  const isDynamic = ad.media_type==='dynamic';
+  const max = isDynamic ? 10 : 5;
+  const hint = isDynamic
+    ? 'Clique para adicionar vídeos (2 a 10) — o Meta testa e prioriza o de melhor performance'
+    : 'Clique para adicionar vídeos (2 a 5)';
+  return `
+  <div>
+    <div class="border-2 border-dashed border-base-300 rounded-lg p-4 text-center cursor-pointer hover:border-primary transition-colors"
+         onclick="document.getElementById('file_${ad.id}').click()">
+      <input type="file" id="file_${ad.id}" class="hidden" accept="video/*" multiple
+             onchange="handleCarouselFiles(${ad.id},this)">
+      <div class="text-sm opacity-50"><div class="text-3xl mb-1">🎞</div>${hint}</div>
+    </div>
+    ${ad.files.length ? `
+    <div class="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-2">
+      ${ad.files.map((f,idx)=>`
+      <div class="relative">
+        <video src="${f.preview}" class="w-full h-20 object-cover rounded" muted></video>
+        <button type="button" onclick="removeCarouselFile(${ad.id},${idx})"
+                class="absolute -top-1 -right-1 btn btn-circle btn-xs btn-error">✕</button>
+      </div>`).join('')}
+    </div>
+    <p class="text-xs opacity-50 mt-1">${ad.files.length}/${max} vídeos adicionados (mínimo 2)</p>` : ''}
   </div>`;
 }
 
@@ -942,7 +1020,11 @@ async function createCampaign(){
     formData.append(`ads[${i}][destination_url]`,  state.destination_url);
     formData.append(`ads[${i}][link_description]`, ad.link_description||'');
     formData.append(`ads[${i}][url_tags]`,         ad.url_tags||'');
-    if(ad.file) formData.append(`ads_files[${i}]`, ad.file);
+    if(ad.media_type==='carousel'||ad.media_type==='dynamic'){
+      ad.files.forEach(f=>formData.append(`ads_files[${i}][]`, f.file));
+    } else if(ad.file){
+      formData.append(`ads_files[${i}]`, ad.file);
+    }
   });
 
   const endpoint = IS_ADMIN ? '/api/generator/create' : '/api/generator/submit';
@@ -1226,6 +1308,8 @@ ob_start();
 
       <div>
         <label class="label label-text text-xs pb-1">Idiomas</label>
+        <input id="languageSearch" type="text" placeholder="Buscar idioma..." oninput="filterLocales()"
+               class="input input-sm input-bordered w-full mb-2">
         <div class="border border-base-300 rounded-lg p-3 max-h-36 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-1">
           <?php
           $locales = [
@@ -1240,7 +1324,8 @@ ob_start();
           ];
           foreach ($locales as [$id, $name]):
           ?>
-          <label class="flex items-center gap-1.5 cursor-pointer text-sm hover:bg-base-200 rounded px-1 py-0.5">
+          <label class="locale-item flex items-center gap-1.5 cursor-pointer text-sm hover:bg-base-200 rounded px-1 py-0.5"
+                 data-label="<?= strtolower($name) ?>">
             <input type="checkbox" class="chk-locale checkbox checkbox-xs checkbox-primary" value="<?= $id ?>">
             <span><?= $name ?></span>
           </label>
@@ -1279,7 +1364,7 @@ ob_start();
               <span class="text-sm font-semibold">Facebook</span>
             </div>
             <div id="positions-facebook" class="pl-5 grid grid-cols-2 sm:grid-cols-4 gap-1">
-              <?php foreach ([['feed','Feed'],['facebook_reels','Reels'],['story','Stories'],['marketplace','Marketplace'],['video_feeds','Vídeos'],['right_hand_column','Coluna Direita'],['search','Busca'],['instream_video','In-stream']] as [$v,$l]): ?>
+              <?php foreach ([['feed','Feed'],['facebook_reels','Reels'],['story','Stories'],['marketplace','Marketplace'],['right_hand_column','Coluna Direita'],['search','Busca'],['instream_video','In-stream']] as [$v,$l]): ?>
               <label class="flex items-center gap-1.5 cursor-pointer text-sm hover:bg-base-200 rounded px-1 py-0.5">
                 <input type="checkbox" class="chk-fb-pos checkbox checkbox-xs checkbox-secondary" value="<?= $v ?>"
                   <?= in_array($v, ['feed','facebook_reels','story']) ? 'checked' : '' ?>>

@@ -87,6 +87,8 @@ class CampaignGeneratorController
 
             $campaignId = $creator->createCampaign($campaignName, $objective, $campaignStatus);
 
+            $isDynamic = in_array('dynamic', array_column($ads, 'media_type'), true);
+
             $adSetId = $creator->createAdSet($campaignId, [
                 'campaign_status'      => $campaignStatus,
                 'campaign_name'        => $campaignName,
@@ -106,12 +108,12 @@ class CampaignGeneratorController
                 'facebook_positions'   => $_POST['facebook_positions']  ?? ['feed', 'facebook_reels', 'story'],
                 'instagram_positions'  => $_POST['instagram_positions'] ?? ['stream', 'reels', 'story'],
                 'messenger_positions'  => $_POST['messenger_positions'] ?? [],
+                'is_dynamic_creative'  => $isDynamic,
             ]);
 
             $results = [];
 
             foreach ($ads as $i => $ad) {
-                $tmpPath   = $_FILES['ads_files']['tmp_name'][$i] ?? null;
                 $mediaType = $ad['media_type'] ?? 'image';
                 $pageId    = $_POST['page_id'] ?? '';
 
@@ -127,12 +129,22 @@ class CampaignGeneratorController
                     'url_tags'          => $ad['url_tags']         ?? '',
                 ];
 
-                if ($mediaType === 'video') {
+                if ($mediaType === 'carousel') {
+                    $tmpPaths = (array) ($_FILES['ads_files']['tmp_name'][$i] ?? []);
+                    $creative['videos'] = $creator->uploadVideosAndWait($tmpPaths, $creative['headline']);
+                    $creativeId = $creator->createCarouselCreative($creative);
+                } elseif ($mediaType === 'dynamic') {
+                    $tmpPaths = (array) ($_FILES['ads_files']['tmp_name'][$i] ?? []);
+                    $creative['videos'] = $creator->uploadVideosAndWait($tmpPaths, $creative['headline']);
+                    $creativeId = $creator->createDynamicCreative($creative);
+                } elseif ($mediaType === 'video') {
+                    $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? null;
                     $video = $creator->uploadVideo($tmpPath, $creative['headline']);
                     $creative['video_id']      = $video['id'];
                     $creative['thumbnail_url'] = $video['thumbnail_url'];
                     $creativeId = $creator->createVideoCreative($creative);
                 } else {
+                    $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? null;
                     $creative['image_hash'] = $creator->uploadImage($tmpPath);
                     $creativeId = $creator->createImageCreative($creative);
                 }
@@ -177,6 +189,34 @@ class CampaignGeneratorController
         // Converte cada arquivo para base64
         $creatives = [];
         foreach ($ads as $i => $ad) {
+            $mediaType = $ad['media_type'] ?? 'image';
+
+            if ($mediaType === 'carousel') {
+                $errors = (array) ($_FILES['ads_files']['error'][$i] ?? []);
+                $paths  = (array) ($_FILES['ads_files']['tmp_name'][$i] ?? []);
+                $mimes  = (array) ($_FILES['ads_files']['type'][$i] ?? []);
+                if (count($paths) < 2 || count($paths) > 5) {
+                    Response::error('Carrossel do anúncio ' . ($i + 1) . ' exige de 2 a 5 vídeos', 422);
+                }
+                $items = [];
+                foreach ($paths as $j => $tmpPath) {
+                    $errCode = $errors[$j] ?? UPLOAD_ERR_NO_FILE;
+                    if ($errCode !== UPLOAD_ERR_OK || $tmpPath === '' || !is_file($tmpPath)) {
+                        Response::error('Vídeo ' . ($j + 1) . ' do anúncio ' . ($i + 1) . ' inválido ou ausente', 422);
+                    }
+                    $items[] = [
+                        'mime_type'   => $mimes[$j] ?? 'video/mp4',
+                        'data_base64' => base64_encode(file_get_contents($tmpPath)),
+                    ];
+                }
+                $creatives[$i] = [
+                    'index'      => $i,
+                    'media_type' => 'carousel',
+                    'items'      => $items,
+                ];
+                continue;
+            }
+
             $errCode = $_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
             $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? '';
             $mime    = $_FILES['ads_files']['type'][$i]     ?? 'application/octet-stream';
@@ -190,7 +230,7 @@ class CampaignGeneratorController
                 'index'       => $i,
                 'name'        => $name,
                 'mime_type'   => $mime,
-                'media_type'  => $ad['media_type'] ?? 'image',
+                'media_type'  => $mediaType,
                 'data_base64' => base64_encode(file_get_contents($tmpPath)),
             ];
         }
@@ -254,8 +294,30 @@ class CampaignGeneratorController
         // Para cada ad: usar novo arquivo se fornecido, senão manter existente
         $creatives = [];
         foreach ($ads as $i => $ad) {
-            $errCode = $_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-            $tmpPath = $_FILES['ads_files']['tmp_name'][$i] ?? '';
+            $mediaType = $ad['media_type'] ?? 'image';
+            $rawPaths  = $_FILES['ads_files']['tmp_name'][$i] ?? null;
+
+            if ($mediaType === 'carousel' && is_array($rawPaths)) {
+                $errors = (array) ($_FILES['ads_files']['error'][$i] ?? []);
+                $mimes  = (array) ($_FILES['ads_files']['type'][$i] ?? []);
+                $items  = [];
+                foreach ($rawPaths as $j => $tmpPath) {
+                    $errCode = $errors[$j] ?? UPLOAD_ERR_NO_FILE;
+                    if ($errCode === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
+                        $items[] = [
+                            'mime_type'   => $mimes[$j] ?? 'video/mp4',
+                            'data_base64' => base64_encode(file_get_contents($tmpPath)),
+                        ];
+                    }
+                }
+                $creatives[$i] = count($items) >= 2
+                    ? ['index' => $i, 'media_type' => 'carousel', 'items' => $items]
+                    : ($existingCreatives[$i] ?? ['index' => $i, 'media_type' => 'carousel', 'items' => []]);
+                continue;
+            }
+
+            $errCode = is_array($rawPaths) ? UPLOAD_ERR_NO_FILE : ($_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE);
+            $tmpPath = is_array($rawPaths) ? '' : ($rawPaths ?? '');
 
             if ($errCode === UPLOAD_ERR_OK && $tmpPath !== '' && is_file($tmpPath)) {
                 $mime = $_FILES['ads_files']['type'][$i] ?? 'application/octet-stream';
@@ -264,7 +326,7 @@ class CampaignGeneratorController
                     'index'       => $i,
                     'name'        => $name,
                     'mime_type'   => $mime,
-                    'media_type'  => $ad['media_type'] ?? 'image',
+                    'media_type'  => $mediaType,
                     'data_base64' => base64_encode(file_get_contents($tmpPath)),
                 ];
             } else {
@@ -273,7 +335,7 @@ class CampaignGeneratorController
                     'index'       => $i,
                     'name'        => 'file_' . $i,
                     'mime_type'   => 'image/jpeg',
-                    'media_type'  => $ad['media_type'] ?? 'image',
+                    'media_type'  => $mediaType,
                     'data_base64' => '',
                 ];
             }
@@ -332,7 +394,30 @@ class CampaignGeneratorController
         ];
 
         foreach ($ads as $i => $ad) {
-            $label = 'Anúncio ' . ($i + 1) . (isset($ad['name']) && $ad['name'] !== '' ? ' ("' . $ad['name'] . '")' : '');
+            $label     = 'Anúncio ' . ($i + 1) . (isset($ad['name']) && $ad['name'] !== '' ? ' ("' . $ad['name'] . '")' : '');
+            $mediaType = $ad['media_type'] ?? 'image';
+
+            if ($mediaType === 'carousel' || $mediaType === 'dynamic') {
+                $errors  = (array) ($_FILES['ads_files']['error'][$i] ?? []);
+                $paths   = (array) ($_FILES['ads_files']['tmp_name'][$i] ?? []);
+                $maxVids = $mediaType === 'carousel' ? 5 : 10;
+                if (count($paths) < 2 || count($paths) > $maxVids) {
+                    $formatLabel = $mediaType === 'carousel' ? 'carrossel exige de 2 a 5 vídeos' : 'anúncio de vários vídeos exige de 2 a 10 vídeos';
+                    throw new \RuntimeException("{$label}: {$formatLabel}");
+                }
+                foreach ($paths as $j => $tmpPath) {
+                    $errCode = $errors[$j] ?? UPLOAD_ERR_NO_FILE;
+                    if ($errCode !== UPLOAD_ERR_OK) {
+                        $msg = $errorMessages[$errCode] ?? "erro de upload (código {$errCode})";
+                        throw new \RuntimeException("{$label}, vídeo " . ($j + 1) . ": {$msg}");
+                    }
+                    if ($tmpPath === '' || !is_file($tmpPath)) {
+                        throw new \RuntimeException("{$label}, vídeo " . ($j + 1) . ": arquivo temporário não encontrado no servidor");
+                    }
+                }
+                continue;
+            }
+
             $errCode = $_FILES['ads_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
             if ($errCode !== UPLOAD_ERR_OK) {
                 $msg = $errorMessages[$errCode] ?? "erro de upload (código {$errCode})";

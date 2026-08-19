@@ -72,6 +72,14 @@ class ApprovalController
         // Reconstrói temp files a partir do base64 salvo
         $tmpPaths = [];
         foreach ($creatives as $i => $creative) {
+            if (($creative['media_type'] ?? '') === 'carousel') {
+                $tmpPaths[$i] = array_map(function ($item) {
+                    $tp = tempnam(sys_get_temp_dir(), 'meta_creative_');
+                    file_put_contents($tp, base64_decode($item['data_base64'] ?? ''));
+                    return $tp;
+                }, $creative['items'] ?? []);
+                continue;
+            }
             $data    = base64_decode($creative['data_base64'] ?? '');
             $tmpPath = tempnam(sys_get_temp_dir(), 'meta_creative_');
             file_put_contents($tmpPath, $data);
@@ -84,6 +92,8 @@ class ApprovalController
                 $payload['objective'],
                 $payload['campaign_status'] ?? 'PAUSED'
             );
+
+            $isDynamic = in_array('dynamic', array_column($creatives, 'media_type'), true);
 
             $adSetId = $creator->createAdSet($campaignId, [
                 'campaign_name'        => $payload['campaign_name'],
@@ -104,13 +114,13 @@ class ApprovalController
                 'facebook_positions'   => $payload['facebook_positions'] ?? ['feed'],
                 'instagram_positions'  => $payload['instagram_positions'] ?? ['stream'],
                 'messenger_positions'  => $payload['messenger_positions'] ?? [],
+                'is_dynamic_creative'  => $isDynamic,
             ]);
 
             $createdAds = [];
             $ads        = $payload['ads'] ?? [];
 
             foreach ($ads as $i => $ad) {
-                $tmpPath   = $tmpPaths[$i] ?? null;
                 $mediaType = $creatives[$i]['media_type'] ?? 'image';
 
                 $creative = [
@@ -125,12 +135,20 @@ class ApprovalController
                     'url_tags'          => $ad['url_tags'] ?? '',
                 ];
 
-                if ($mediaType === 'video') {
+                if ($mediaType === 'carousel') {
+                    $creative['videos'] = $creator->uploadVideosAndWait((array) ($tmpPaths[$i] ?? []), $creative['headline']);
+                    $creativeId = $creator->createCarouselCreative($creative);
+                } elseif ($mediaType === 'dynamic') {
+                    $creative['videos'] = $creator->uploadVideosAndWait((array) ($tmpPaths[$i] ?? []), $creative['headline']);
+                    $creativeId = $creator->createDynamicCreative($creative);
+                } elseif ($mediaType === 'video') {
+                    $tmpPath = $tmpPaths[$i] ?? null;
                     $video = $creator->uploadVideo($tmpPath, $creative['headline']);
                     $creative['video_id']      = $video['id'];
                     $creative['thumbnail_url'] = $video['thumbnail_url'];
                     $creativeId = $creator->createVideoCreative($creative);
                 } else {
+                    $tmpPath = $tmpPaths[$i] ?? null;
                     $creative['image_hash'] = $creator->uploadImage($tmpPath);
                     $creativeId = $creator->createImageCreative($creative);
                 }
@@ -150,7 +168,13 @@ class ApprovalController
             Response::error('Erro ao criar campanha no Meta: ' . $e->getMessage(), 500);
         } finally {
             foreach ($tmpPaths as $tmp) {
-                if (is_file($tmp)) {
+                if (is_array($tmp)) {
+                    foreach ($tmp as $t) {
+                        if (is_file($t)) {
+                            unlink($t);
+                        }
+                    }
+                } elseif (is_file($tmp)) {
                     unlink($tmp);
                 }
             }
