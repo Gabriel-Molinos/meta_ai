@@ -36,7 +36,7 @@ class ConsolidationService
             $avSessions   = $this->sumSessionsForDay($sessions[$campaignId] ?? [], $date);
 
             $spendUsd = $dayData['spend_usd'] ?? 0.0;
-            $roas     = $spendUsd > 0 ? round($avRevenue / $spendUsd, 4) : 0.0;
+            $roas     = $spendUsd > 0 ? round(($avRevenue - $spendUsd) / $spendUsd, 4) : 0.0;
 
             $result[] = [
                 'campaign_id'    => $campaignId,
@@ -54,6 +54,31 @@ class ConsolidationService
                 'av_revenue_usd' => round($avRevenue, 4),
                 'av_impressions' => $avImpressions,
                 'av_sessions'    => $avSessions,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Agrega apenas métricas ActiveView (sem cruzar com Meta Insights),
+     * usado por bin/domainExtract.php.
+     *
+     * @param array $revenue  [campaign_id][] => {date, revenue_usd, impressions, ...}
+     * @param array $sessions [campaign_id][] => {date, sessions}
+     * @return array [['campaign_id', 'av_revenue_usd', 'av_impressions', 'av_sessions'], ...]
+     */
+    public function consolidateActiveViewOnly(array $revenue, array $sessions, string $date): array
+    {
+        $campaignIds = array_unique(array_merge(array_keys($revenue), array_keys($sessions)));
+        $result = [];
+
+        foreach ($campaignIds as $campaignId) {
+            $result[] = [
+                'campaign_id'    => $campaignId,
+                'av_revenue_usd' => round($this->sumRevenueForDay($revenue[$campaignId] ?? [], $date), 4),
+                'av_impressions' => $this->sumImpressionsForDay($revenue[$campaignId] ?? [], $date),
+                'av_sessions'    => $this->sumSessionsForDay($sessions[$campaignId] ?? [], $date),
             ];
         }
 

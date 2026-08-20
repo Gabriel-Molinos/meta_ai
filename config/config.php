@@ -72,6 +72,7 @@ return [
     'retry' => [
         'max_attempts'  => 3,
         'base_delay_ms' => 1000,
+        'max_delay_ms'  => 30000,
     ],
 
     'sync' => [

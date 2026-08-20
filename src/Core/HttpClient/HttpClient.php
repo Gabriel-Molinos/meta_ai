@@ -12,6 +12,7 @@ class HttpClient
 
     private int    $maxAttempts;
     private int    $baseDelayMs;
+    private int    $maxDelayMs;
     private bool   $sslVerify;
     private string $cainfo;
 
@@ -19,6 +20,7 @@ class HttpClient
     {
         $this->maxAttempts = (int) ($retryConfig['max_attempts']  ?? 3);
         $this->baseDelayMs = (int) ($retryConfig['base_delay_ms'] ?? 1000);
+        $this->maxDelayMs  = (int) ($retryConfig['max_delay_ms']  ?? 30000);
         $this->sslVerify   = (bool) ($curlConfig['ssl_verify']    ?? true);
         $this->cainfo      = (string) ($curlConfig['cainfo']      ?? '');
     }
@@ -138,7 +140,8 @@ class HttpClient
                 throw new ApiException("HTTP {$statusCode} from {$url} — {$truncated}", $statusCode);
             }
 
-            usleep($this->baseDelayMs * (2 ** ($attempt - 1)) * 1000);
+            $delayMs = min($this->baseDelayMs * (2 ** ($attempt - 1)), $this->maxDelayMs);
+            usleep($delayMs * 1000);
         }
     }
 

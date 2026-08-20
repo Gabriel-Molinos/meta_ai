@@ -105,6 +105,10 @@ $router->addRoute('POST',   '/api/accounts',          [$accountCtrl, 'store']);
 $router->addRoute('PUT',    '/api/accounts/{key}',    [$accountCtrl, 'update']);
 $router->addRoute('DELETE', '/api/accounts/{key}',    [$accountCtrl, 'destroy']);
 
+// API — Relatórios de campanhas (Meta x ActiveView)
+$router->addRoute('GET', '/api/campaigns',  [$campaignCtrl, 'index']);
+$router->addRoute('GET', '/api/dashboard',  [$campaignCtrl, 'dashboard']);
+
 // API — Lista de contas acessível ao usuário logado (admin=todas, user=vinculadas)
 $router->addRoute('GET', '/api/accounts/list', function (Request $r) use ($auth, $accountModel) {
     $ctx = $auth->resolveContext($r);
@@ -365,6 +369,8 @@ if (!$isApi && !$isLogin) {
 $router->addRoute('GET', '/',                  fn() => header('Location: /generator') ?: exit);
 $router->addRoute('GET', '/login',             [$authCtrl, 'showLogin']);
 $router->addRoute('GET', '/accounts',          fn() => require __DIR__ . '/views/accounts.php');
+$router->addRoute('GET', '/dashboard',         fn() => require __DIR__ . '/views/dashboard.php');
+$router->addRoute('GET', '/campaigns',         fn() => require __DIR__ . '/views/campaigns.php');
 $router->addRoute('GET', '/generator',         fn() => require __DIR__ . '/views/generator.php');
 $router->addRoute('GET', '/wordpress/pages',   fn() => require __DIR__ . '/views/wordpress/pages.php');
 $router->addRoute('GET', '/approvals',         fn() => require __DIR__ . '/views/approvals.php');

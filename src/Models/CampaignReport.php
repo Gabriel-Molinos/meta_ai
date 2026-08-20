@@ -39,10 +39,12 @@ class CampaignReport
                     ctr            = VALUES(ctr),
                     cpc_usd        = VALUES(cpc_usd),
                     cpm_usd        = VALUES(cpm_usd),
-                    roas           = VALUES(roas),
-                    av_revenue_usd = VALUES(av_revenue_usd),
-                    av_impressions = VALUES(av_impressions),
-                    av_sessions    = VALUES(av_sessions)';
+                    av_revenue_usd = IF(VALUES(av_revenue_usd) > 0, VALUES(av_revenue_usd), av_revenue_usd),
+                    av_impressions = IF(VALUES(av_impressions) > 0, VALUES(av_impressions), av_impressions),
+                    av_sessions    = IF(VALUES(av_sessions)    > 0, VALUES(av_sessions),    av_sessions),
+                    roas           = IF(VALUES(spend_usd) > 0,
+                                         ROUND((IF(VALUES(av_revenue_usd) > 0, VALUES(av_revenue_usd), av_revenue_usd) - VALUES(spend_usd)) / VALUES(spend_usd), 4),
+                                         0)';
 
         $stmt = $pdo->prepare($sql);
 
@@ -68,6 +70,60 @@ class CampaignReport
                 ':av_sessions'    => $c['av_sessions']    ?? 0,
             ]);
         }
+    }
+
+    /**
+     * Upsert apenas do lado ActiveView (domainExtract.php), preservando os campos
+     * do lado Meta (campaign_name, status, spend_usd, etc.) se a linha já existir.
+     *
+     * @param array $campaigns [['campaign_id', 'av_revenue_usd', 'av_impressions', 'av_sessions'], ...]
+     */
+    public function upsertActiveViewMetrics(
+        int    $executionId,
+        string $date,
+        string $accountKey,
+        string $domain,
+        array  $campaigns
+    ): int {
+        if (empty($campaigns)) {
+            return 0;
+        }
+
+        $pdo = Connection::getInstance();
+
+        $sql = "INSERT INTO campaign_reports
+                    (execution_id, report_date, campaign_id, account_key, domain,
+                     campaign_name, status, av_revenue_usd, av_impressions, av_sessions, roas)
+                VALUES
+                    (:execution_id, :report_date, :campaign_id, :account_key, :domain,
+                     '', '', :av_revenue_usd, :av_impressions, :av_sessions, 0)
+                ON DUPLICATE KEY UPDATE
+                    domain         = VALUES(domain),
+                    av_revenue_usd = VALUES(av_revenue_usd),
+                    av_impressions = VALUES(av_impressions),
+                    av_sessions    = VALUES(av_sessions),
+                    roas           = IF(spend_usd > 0,
+                                         ROUND((VALUES(av_revenue_usd) - spend_usd) / spend_usd, 4),
+                                         0)";
+
+        $stmt  = $pdo->prepare($sql);
+        $count = 0;
+
+        foreach ($campaigns as $c) {
+            $stmt->execute([
+                ':execution_id'   => $executionId,
+                ':report_date'    => $date,
+                ':campaign_id'    => $c['campaign_id'],
+                ':account_key'    => $accountKey,
+                ':domain'         => $domain,
+                ':av_revenue_usd' => $c['av_revenue_usd'] ?? 0.0,
+                ':av_impressions' => $c['av_impressions'] ?? 0,
+                ':av_sessions'    => $c['av_sessions']    ?? 0,
+            ]);
+            $count++;
+        }
+
+        return $count;
     }
 
     public function query(array $filters): array
@@ -122,7 +178,18 @@ class CampaignReport
 
     public function getOverviewMetrics(string $accountKey, int $days = 30): array
     {
+        // Período dinâmico dos últimos $days dias, mas sempre encerrando ontem —
+        // hoje nunca aparece pois o sync roda de manhã para o dia anterior.
+        $end    = date('Y-m-d', strtotime('-1 day'));
         $cutoff = date('Y-m-d', strtotime("-{$days} days"));
+
+        $where  = ['report_date BETWEEN :cutoff AND :end'];
+        $params = [':cutoff' => $cutoff, ':end' => $end];
+        if ($accountKey !== '') {
+            $where[]              = 'account_key = :account_key';
+            $params[':account_key'] = $accountKey;
+        }
+        $whereClause = implode(' AND ', $where);
 
         $stmt = Connection::getInstance()->prepare(
             "SELECT
@@ -132,20 +199,17 @@ class CampaignReport
                 SUM(spend_usd)              AS spend_usd,
                 SUM(av_revenue_usd)         AS av_revenue_usd,
                 SUM(av_sessions)            AS av_sessions,
-                ROUND(SUM(av_revenue_usd) / NULLIF(SUM(spend_usd), 0), 4) AS roas
+                ROUND((SUM(av_revenue_usd) - SUM(spend_usd)) / NULLIF(SUM(spend_usd), 0), 4) AS roas
              FROM campaign_reports
-             WHERE account_key = :account_key
-               AND report_date >= :cutoff"
+             WHERE {$whereClause}"
         );
-        $stmt->execute([
-            ':account_key' => $accountKey,
-            ':cutoff'      => $cutoff,
-        ]);
+        $stmt->execute($params);
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
     }
 
     public function getTopByRoas(int $days = 30, int $limit = 20): array
     {
+        $end    = date('Y-m-d', strtotime('-1 day'));
         $cutoff = date('Y-m-d', strtotime("-{$days} days"));
 
         $stmt = Connection::getInstance()->prepare(
@@ -158,16 +222,16 @@ class CampaignReport
                 SUM(impressions)    AS impressions,
                 SUM(clicks)        AS clicks,
                 SUM(av_sessions)   AS av_sessions,
-                ROUND(SUM(av_revenue_usd) / NULLIF(SUM(spend_usd), 0), 4) AS roas
+                ROUND((SUM(av_revenue_usd) - SUM(spend_usd)) / NULLIF(SUM(spend_usd), 0), 4) AS roas
              FROM campaign_reports
-             WHERE report_date >= :cutoff
+             WHERE report_date BETWEEN :cutoff AND :end
                AND spend_usd > 0
              GROUP BY campaign_id, campaign_name, account_key
-             HAVING roas > 0
              ORDER BY roas DESC
              LIMIT :limit"
         );
         $stmt->bindValue(':cutoff', $cutoff);
+        $stmt->bindValue(':end',    $end);
         $stmt->bindValue(':limit',  $limit, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -177,11 +241,15 @@ class CampaignReport
     {
         $cutoff = date('Y-m-d', strtotime("-{$lookbackDays} days"));
 
+        // campaign_name só é vazio em linhas criadas por domainExtract.php (lado
+        // ActiveView) antes do lado Meta rodar — não conta como "já sincronizado",
+        // senão o sync.php nunca mais preenche spend_usd/campaign_name para o dia.
         $existing = [];
         $stmt = Connection::getInstance()->prepare(
             "SELECT DISTINCT report_date FROM campaign_reports
              WHERE account_key = :account_key
-               AND report_date >= :cutoff"
+               AND report_date >= :cutoff
+               AND campaign_name != ''"
         );
         $stmt->execute([
             ':account_key' => $accountKey,
