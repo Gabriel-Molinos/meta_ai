@@ -134,10 +134,14 @@ class CampaignReport
         if (!empty($filters['account_key'])) {
             $where[]              = 'account_key = :account_key';
             $params[':account_key'] = $filters['account_key'];
+        } elseif (!empty($filters['account_keys'])) {
+            [$inClause, $inParams] = $this->buildInClause('ak', $filters['account_keys']);
+            $where[] = "account_key IN ({$inClause})";
+            $params  = array_merge($params, $inParams);
         }
         if (!empty($filters['campaign_name'])) {
             $safe                     = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $filters['campaign_name']);
-            $where[]                  = "campaign_name LIKE :campaign_name ESCAPE '\\'";
+            $where[]                  = 'campaign_name LIKE :campaign_name';
             $params[':campaign_name'] = '%' . $safe . '%';
         }
         if (!empty($filters['start_date'])) {
@@ -176,18 +180,33 @@ class CampaignReport
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    public function getOverviewMetrics(string $accountKey, int $days = 30): array
-    {
+    /**
+     * @param array|null $allowedAccountKeys Quando não-null, restringe o resultado a essas
+     *                                        contas (usado para usuários não-admin, que só
+     *                                        podem ver as contas vinculadas a eles).
+     */
+    public function getOverviewMetrics(
+        string $accountKey,
+        int    $days = 30,
+        ?array $allowedAccountKeys = null,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): array {
         // Período dinâmico dos últimos $days dias, mas sempre encerrando ontem —
         // hoje nunca aparece pois o sync roda de manhã para o dia anterior.
-        $end    = date('Y-m-d', strtotime('-1 day'));
-        $cutoff = date('Y-m-d', strtotime("-{$days} days"));
+        // $startDate/$endDate (filtro de data personalizado) têm prioridade sobre $days.
+        $end    = $endDate   ?? date('Y-m-d', strtotime('-1 day'));
+        $cutoff = $startDate ?? date('Y-m-d', strtotime("-{$days} days"));
 
         $where  = ['report_date BETWEEN :cutoff AND :end'];
         $params = [':cutoff' => $cutoff, ':end' => $end];
         if ($accountKey !== '') {
             $where[]              = 'account_key = :account_key';
             $params[':account_key'] = $accountKey;
+        } elseif ($allowedAccountKeys !== null) {
+            [$inClause, $inParams] = $this->buildInClause('ov', $allowedAccountKeys);
+            $where[] = "account_key IN ({$inClause})";
+            $params  = array_merge($params, $inParams);
         }
         $whereClause = implode(' AND ', $where);
 
@@ -207,10 +226,32 @@ class CampaignReport
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
     }
 
-    public function getTopByRoas(int $days = 30, int $limit = 20): array
-    {
-        $end    = date('Y-m-d', strtotime('-1 day'));
-        $cutoff = date('Y-m-d', strtotime("-{$days} days"));
+    /**
+     * @param array|null $allowedAccountKeys Quando não-null, restringe o resultado a essas
+     *                                        contas (usado para usuários não-admin).
+     */
+    public function getTopByRoas(
+        int    $days = 30,
+        int    $limit = 20,
+        string $accountKey = '',
+        ?array $allowedAccountKeys = null,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): array {
+        $end    = $endDate   ?? date('Y-m-d', strtotime('-1 day'));
+        $cutoff = $startDate ?? date('Y-m-d', strtotime("-{$days} days"));
+
+        $where  = ['report_date BETWEEN :cutoff AND :end', 'spend_usd > 0'];
+        $params = [':cutoff' => $cutoff, ':end' => $end];
+        if ($accountKey !== '') {
+            $where[]              = 'account_key = :account_key';
+            $params[':account_key'] = $accountKey;
+        } elseif ($allowedAccountKeys !== null) {
+            [$inClause, $inParams] = $this->buildInClause('tr', $allowedAccountKeys);
+            $where[] = "account_key IN ({$inClause})";
+            $params  = array_merge($params, $inParams);
+        }
+        $whereClause = implode(' AND ', $where);
 
         $stmt = Connection::getInstance()->prepare(
             "SELECT
@@ -224,17 +265,72 @@ class CampaignReport
                 SUM(av_sessions)   AS av_sessions,
                 ROUND((SUM(av_revenue_usd) - SUM(spend_usd)) / NULLIF(SUM(spend_usd), 0), 4) AS roas
              FROM campaign_reports
-             WHERE report_date BETWEEN :cutoff AND :end
-               AND spend_usd > 0
+             WHERE {$whereClause}
              GROUP BY campaign_id, campaign_name, account_key
              ORDER BY roas DESC
              LIMIT :limit"
         );
-        $stmt->bindValue(':cutoff', $cutoff);
-        $stmt->bindValue(':end',    $end);
-        $stmt->bindValue(':limit',  $limit, PDO::PARAM_INT);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Série diária de gasto x receita (pro gráfico do dashboard).
+     *
+     * @param array|null $allowedAccountKeys Quando não-null, restringe o resultado a essas
+     *                                        contas (usado para usuários não-admin).
+     */
+    public function getDailySeries(
+        string  $accountKey,
+        int     $days = 30,
+        ?array  $allowedAccountKeys = null,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): array {
+        $end    = $endDate   ?? date('Y-m-d', strtotime('-1 day'));
+        $cutoff = $startDate ?? date('Y-m-d', strtotime("-{$days} days"));
+
+        $where  = ['report_date BETWEEN :cutoff AND :end'];
+        $params = [':cutoff' => $cutoff, ':end' => $end];
+        if ($accountKey !== '') {
+            $where[]              = 'account_key = :account_key';
+            $params[':account_key'] = $accountKey;
+        } elseif ($allowedAccountKeys !== null) {
+            [$inClause, $inParams] = $this->buildInClause('ds', $allowedAccountKeys);
+            $where[] = "account_key IN ({$inClause})";
+            $params  = array_merge($params, $inParams);
+        }
+        $whereClause = implode(' AND ', $where);
+
+        $stmt = Connection::getInstance()->prepare(
+            "SELECT
+                report_date,
+                SUM(spend_usd)      AS spend_usd,
+                SUM(av_revenue_usd) AS av_revenue_usd,
+                ROUND((SUM(av_revenue_usd) - SUM(spend_usd)) / NULLIF(SUM(spend_usd), 0), 4) AS roas
+             FROM campaign_reports
+             WHERE {$whereClause}
+             GROUP BY report_date
+             ORDER BY report_date ASC"
+        );
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function buildInClause(string $prefix, array $values): array
+    {
+        $placeholders = [];
+        $params       = [];
+        foreach (array_values($values) as $i => $value) {
+            $key                = ":{$prefix}{$i}";
+            $placeholders[]     = $key;
+            $params[$key]       = $value;
+        }
+        return [implode(',', $placeholders), $params];
     }
 
     public function getMissingDates(string $accountKey, int $lookbackDays): array

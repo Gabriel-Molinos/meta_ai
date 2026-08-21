@@ -12,6 +12,7 @@ ob_start();
   --cyan:#4dd8c4; --cyan-dim:rgba(77,216,196,.14);
   --amber:#ffb454; --amber-dim:rgba(255,180,84,.14);
   --red:#ff6b6b; --red-dim:rgba(255,107,107,.12);
+  --violet:#b98eff; --violet-dim:rgba(185,142,255,.14);
   position:relative; isolation:isolate; box-sizing:border-box;
   background:
     radial-gradient(ellipse 900px 500px at 12% -10%, rgba(77,216,196,.08), transparent 60%),
@@ -50,6 +51,13 @@ ob_start();
   background-repeat:no-repeat; background-position:right 8px center; background-size:14px; padding-right:28px;
 }
 .rp-select:focus{ outline:none; border-color:var(--cyan); box-shadow:0 0 0 3px var(--cyan-dim); }
+
+.rp-input{
+  background:var(--panel-2); border:1px solid var(--hair); color:var(--text);
+  border-radius:8px; padding:7px 10px; font-size:12.5px;
+  transition:border-color .15s, box-shadow .15s; color-scheme:dark;
+}
+.rp-input:focus{ outline:none; border-color:var(--cyan); box-shadow:0 0 0 3px var(--cyan-dim); }
 
 .rp-btn{
   display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600;
@@ -133,12 +141,20 @@ ob_start();
       </div>
       <div class="rp-field">
         <label class="rp-field-label">Período</label>
-        <select id="days" class="rp-select" onchange="loadDashboard()">
+        <select id="days" class="rp-select" onchange="document.getElementById('startDate').value='';document.getElementById('endDate').value='';loadDashboard()">
           <option value="7" selected>Últimos 7 dias</option>
           <option value="14">Últimos 14 dias</option>
           <option value="30">Últimos 30 dias</option>
           <option value="60">Últimos 60 dias</option>
         </select>
+      </div>
+      <div class="rp-field">
+        <label class="rp-field-label">De</label>
+        <input id="startDate" type="date" class="rp-input" onchange="loadDashboard()">
+      </div>
+      <div class="rp-field">
+        <label class="rp-field-label">Até</label>
+        <input id="endDate" type="date" class="rp-input" onchange="loadDashboard()">
       </div>
       <button onclick="loadDashboard()" class="rp-btn">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
@@ -149,6 +165,16 @@ ob_start();
 
   <div id="overview">
     <div class="rp-hero"><span class="rp-spinner"></span></div>
+  </div>
+
+  <div class="rp-panel" style="margin-bottom:14px;">
+    <div class="rp-panel-title">
+      Custo × Receita
+      <span class="rp-eyebrow">Linha = ROI diário</span>
+    </div>
+    <div id="chartWrap" style="position:relative; height:280px;">
+      <div class="rp-empty"><span class="rp-spinner"></span></div>
+    </div>
   </div>
 
   <div class="rp-panel">
@@ -162,8 +188,63 @@ ob_start();
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => { loadAccounts(); loadDashboard(); });
+
+let chartInstance = null;
+function renderChart(rows) {
+  const wrap = document.getElementById('chartWrap');
+  if (!rows.length) {
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    wrap.innerHTML = '<div class="rp-empty">Sem dados nesse período.</div>';
+    return;
+  }
+  if (!wrap.querySelector('canvas')) {
+    wrap.innerHTML = '<canvas id="dailyChart"></canvas>';
+  }
+  const ctx = document.getElementById('dailyChart');
+
+  const labels  = rows.map(r => new Date(r.report_date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
+  const spend   = rows.map(r => parseFloat(r.spend_usd || 0));
+  const revenue = rows.map(r => parseFloat(r.av_revenue_usd || 0));
+  const roi     = rows.map(r => parseFloat(r.roas || 0) * 100);
+
+  const dim  = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim() || '#8291a3';
+  const hair = getComputedStyle(document.documentElement).getPropertyValue('--hair-soft').trim() || '#1a232c';
+
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar',  label: 'Gasto',     data: spend,   backgroundColor: 'rgba(255,180,84,.55)',  borderRadius: 3, yAxisID: 'y' },
+        { type: 'bar',  label: 'Receita AV',data: revenue, backgroundColor: 'rgba(77,216,196,.55)',  borderRadius: 3, yAxisID: 'y' },
+        { type: 'line', label: 'ROI', data: roi, borderColor: '#b98eff', backgroundColor: '#b98eff',
+          borderWidth: 2, pointRadius: 2, tension: .3, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: dim, font: { family: 'Inter', size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (item) => item.dataset.yAxisID === 'y1'
+              ? `ROI: ${item.parsed.y.toFixed(1)}%`
+              : `${item.dataset.label}: $${item.parsed.y.toFixed(2)}`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: hair }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 } } },
+        y: { position: 'left', grid: { color: hair }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 }, callback: (v) => '$' + v } },
+        y1: { position: 'right', grid: { display: false }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 }, callback: (v) => v + '%' } },
+      },
+    },
+  });
+}
 
 async function loadAccounts() {
   const sel = document.getElementById('accountFilter');
@@ -177,26 +258,35 @@ async function loadAccounts() {
   }
 }
 
-function updatePeriodLabel(days) {
+function updatePeriodLabel(days, startDate, endDate) {
+  const f = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  if (startDate && endDate) {
+    document.getElementById('periodLabel').textContent =
+      `${f(new Date(startDate + 'T00:00:00'))} — ${f(new Date(endDate + 'T00:00:00'))} · período personalizado`;
+    return;
+  }
   const end = new Date(); end.setDate(end.getDate() - 1);
   const start = new Date(); start.setDate(start.getDate() - Number(days));
-  const f = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   document.getElementById('periodLabel').textContent =
     `${f(start)} — ${f(end)} · não inclui hoje`;
 }
 
 async function loadDashboard() {
-  const days = document.getElementById('days').value;
+  const days      = document.getElementById('days').value;
   const accountKey = document.getElementById('accountFilter').value;
-  updatePeriodLabel(days);
+  const startDate  = document.getElementById('startDate').value;
+  const endDate    = document.getElementById('endDate').value;
+  const useCustomRange = !!(startDate && endDate);
+  updatePeriodLabel(days, startDate, endDate);
 
   try {
-    const params = new URLSearchParams({ days });
+    const params = new URLSearchParams(useCustomRange ? { start_date: startDate, end_date: endDate } : { days });
     if (accountKey) params.set('account_key', accountKey);
 
     const data = await apiFetch('/api/dashboard?' + params);
     renderOverview(data.overview || {});
     renderTopTable(data.top_roas || []);
+    renderChart(data.daily_series || []);
   } catch (e) {
     document.getElementById('overview').innerHTML = `<div class="rp-empty">${esc(e.message)}</div>`;
   }
