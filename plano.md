@@ -1,6 +1,6 @@
 # Plano Do Meta Ads + Active View Integration API
 
-> Atualizado em 2026-08-18 para refletir o estado real do sistema (v1 era um plano inicial focado só em dashboard de ROAS; o escopo cresceu para gerador de campanhas com aprovação, gestão de usuários, módulo WordPress e agente de IA para criativos — ver histórico de commits).
+> Atualizado em 2026-08-21 para refletir o estado real do sistema (v1 era um plano inicial focado só em dashboard de ROAS; o escopo cresceu para gerador de campanhas com aprovação, gestão de usuários, módulo WordPress, agente de IA para criativos e dashboard de ROAS ao vivo — ver histórico de commits).
 
 ## Persona
 Você será um desenvolvedor full stack web, capaz de compreender facilmente as integrações webs via API.
@@ -11,7 +11,7 @@ Sistema interno com quatro frentes:
 
 1. **Gerador de campanhas Meta Ads** — wizard guiado (5 passos) que monta campanha → adset → creative → ad. Usuários não-admin não publicam direto: submetem um *draft* que passa por aprovação de um admin antes de ir ao ar. Cada anúncio pode ser imagem única, vídeo único, **carrossel** (2-5 vídeos em cards lado a lado) ou **Dynamic Creative** (2-10 vídeos num único anúncio, o Meta testa/roda automaticamente).
 2. **Agente de IA para criativos** — gera imagem/vídeo de anúncio a partir de um exemplo (imagem, vídeo, texto ou HTML) enviado pelo usuário, com recomendação automática de formato de mídia.
-3. **Consolidação de ROAS** — cruza métricas do **Meta Ads** com dados de receita e sessões da **ActiveView**, calcula ROAS por campanha e persiste o histórico no MySQL (`bin/sync.php`, agendado via Windows Task Scheduler, uma task por conta).
+3. **Dashboard de ROAS ao vivo** — cruza gasto do **Meta Ads** com receita da **ActiveView** por `campaign_id`, só para campanhas com `status=ACTIVE` (filtro deliberado — ver seção própria abaixo), persiste o histórico em `campaign_reports` e expõe em `/dashboard` e `/campaigns`. Populado por `bin/sync.php`, agendado via **cron** na VPS de produção (`/var/www/meta_ai`, ver `crons.txt` na raiz do repo), rodando uma vez ao dia para todas as contas num processo só.
 4. **Geração de conteúdo WordPress** — cria posts/páginas com Gemini (texto + imagem de destaque) e publica em sites WordPress externos via REST API (Application Password).
 
 Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas no banco. Interface Web em MVC feito à mão (sem framework), autenticação dupla (admin por token estático, usuários por Google OAuth).
@@ -27,7 +27,7 @@ Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas n
 | HTTP Client | cURL wrapper próprio com retry exponencial e upload multipart |
 | Criptografia | AES-256-CBC (OpenSSL) para segredos em repouso (tokens Meta, chaves ActiveView, senha de app WordPress) |
 | Autenticação | Admin: `APP_API_KEY` estático. Usuário: Google OAuth 2.0, sessão de 24h (`session_token` em `users`) |
-| Agendamento | Windows Task Scheduler (uma task por conta) rodando `bin/sync.php` |
+| Agendamento | Cron na VPS de produção — uma linha só, `bin/sync.php` processa todas as contas ativas num processo sequencial (ver `crons.txt`) |
 | Servidor dev | PHP built-in server (`php -S localhost:8080 -t public`) |
 | IA — texto/análise | Google Gemini 2.5 Flash (`gemini-2.5-flash`), via **Vertex AI** (JWT hand-rolled, fallback automático para API pública se credencial Vertex não configurada) |
 | IA — imagem | `gemini-2.5-flash-image`, via Vertex AI com o mesmo fallback |
@@ -38,10 +38,14 @@ Suporta múltiplas contas Meta Ads + ActiveView com credenciais criptografadas n
 
 ```
 meta_ai/
-├── bin/                        Scripts CLI: migrate.php, sync.php, e diagnósticos (test_*.php)
+├── bin/                        Scripts CLI: migrate.php, sync.php, domainExtract.php,
+│                                domainExtractAll.php, e diagnósticos (test_*.php, list_accounts.php)
 │                                para experimentar direto contra a Graph API do Meta
 ├── config/
 │   └── config.php              Lê .env e monta o array de configuração central
+├── crons.txt                   Linhas de cron de produção (VPS /var/www/meta_ai)
+├── docs/
+│   └── activeview.md           Guia de referência da integração ActiveView (API + SDK client-side)
 ├── database/
 │   └── migrations/             9 arquivos SQL numerados (accounts, executions,
 │                                campaign_reports, users, wordpress_sites,
@@ -49,7 +53,8 @@ meta_ai/
 ├── public/
 │   ├── index.php               Front controller único — instancia tudo (DI manual)
 │   │                            e registra todas as rotas (API + views)
-│   └── views/                  Templates PHP renderizados no servidor (DaisyUI/Tailwind)
+│   └── views/                  Templates PHP renderizados no servidor (DaisyUI/Tailwind),
+│                                inclui dashboard.php e campaigns.php (dashboard de ROAS)
 └── src/
     ├── Controllers/            AccountController, CampaignGeneratorController,
     │                           ApprovalController, AuthController, AiController,
@@ -61,7 +66,10 @@ meta_ai/
     │                           WordPressSite, WordPressTemplate, ExecutionLog
     └── Services/
         ├── MetaAds/            CampaignService, CampaignCreatorService, InsightService, PixelService
-        ├── ActiveView/         RevenueService, SessionService, GamCustomReportService
+        ├── ActiveView/         RevenueService, SessionService, GamCustomReportService,
+        │                       KvpCampaignMediumService
+        ├── Fx/                 ExchangeRateService — conversão de moeda nativa da conta p/ USD
+        │                       (api.frankfurter.dev, cache 30 dias por par/data)
         ├── AI/                 GeminiService (texto), CreativeAnalysisService (análise multimodal),
         │                       CreativeGenerationService (imagem), CreativeAgentService (orquestra
         │                       geração de criativo de anúncio), VeoVideoService (vídeo, API pública),
@@ -78,11 +86,13 @@ meta_ai/
 - **Aprovação de campanhas** (`/approvals`, `/my-campaigns`): usuários OAuth submetem drafts (`campaign_drafts`, criativos em base64 — inclusive múltiplos arquivos por anúncio no caso de carrossel/Dynamic Creative); admin aprova (cria de fato no Meta via `CampaignCreatorService`) ou rejeita com motivo, permitindo reenvio.
 - **Usuários** (`/users`): gestão de usuários Google OAuth e vínculo de quais contas cada um pode ver/usar (`user_accounts`).
 - **WordPress** (`/wordpress/pages`): geração de conteúdo (texto + imagem) com Gemini e publicação via REST API do WordPress, com templates reutilizáveis.
-- **Sync de ROAS** (`bin/sync.php`): cron por conta que busca insights do Meta + receita/sessões da ActiveView e persiste o ROAS calculado.
+- **Dashboard de ROAS** (`/dashboard`, `/campaigns`): visão consolidada de gasto × receita por campanha, filtro por conta/período, tabela ordenável por ROAS. `roas = (receita_av - gasto)/gasto` (0% = ponto de equilíbrio). Populado por `bin/sync.php`.
 
-### Removido do roteador (arquivos ainda presentes, mas inacessíveis)
+### `bin/sync.php` — única fonte de dados do dashboard (decisão de 2026-08-21)
 
-Uma versão anterior tinha dashboard de ROAS, listagem/filtro de campanhas e análise de campanhas por IA. As rotas foram removidas (`chore: remove dashboard, campaigns e IA routes e menu items`), mas os arquivos de view (`dashboard.php`, `campaigns.php`, `views/ia/analysis.php`) e `GeminiService::analyzeCampaigns` continuam no repositório como código morto — não vale confiar neles sem revisar antes de reativar.
+Processa `Account::allForSync()` sequencialmente num processo só (sem cron por conta). Para cada conta: busca campanhas + insights do Meta, filtra **só `status=ACTIVE`** ([bin/sync.php:84](bin/sync.php#L84) — proposital, não atualiza campanha pausada/arquivada), busca a receita/sessões da ActiveView **apenas para essas campanhas ativas** via `ConsolidationService::consolidate()`, e grava tudo junto em `campaign_reports` com o ROAS já calculado. Usa `getMissingDates()` para só buscar dias que ainda não estão no banco (lookback de `config.sync.lookback_days`, hoje 30 dias) — rodar sem argumento processa efetivamente só o dia mais recente no uso diário normal.
+
+Existe também `bin/domainExtract.php`/`bin/domainExtractAll.php`, que capturam receita da ActiveView de **todas** as campanhas que a plataforma já viu (inclusive pausadas/antigas, fora do escopo do `sync.php`) — mas **não estão no cron de produção**: o escopo atual do dashboard é só campanhas ativas, então esses scripts ficam disponíveis pra uso manual/futuro caso esse escopo mude, sem rodar por padrão.
 
 ## Documentações dos Endpoints do Meta Ads
 -> https://developers.facebook.com/docs/?locale=pt_BR

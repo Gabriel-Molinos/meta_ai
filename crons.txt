@@ -1,1 +1,1 @@
-0 7 * * * cd /var/www/meta_ai && flock -n /tmp/domainExtractAll.lock /usr/bin/php bin/domainExtractAll.php --retries=30 >> storage/logs/domainExtractAll.log 2>&1
+0 6 * * * cd /var/www/meta_ai && flock -n /tmp/sync.lock /usr/bin/php bin/sync.php >> storage/logs/sync.log 2>&1
