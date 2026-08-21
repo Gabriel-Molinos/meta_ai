@@ -16,6 +16,7 @@ ob_start();
   --cyan:#4dd8c4; --cyan-dim:rgba(77,216,196,.14);
   --amber:#ffb454; --amber-dim:rgba(255,180,84,.14);
   --red:#ff6b6b; --red-dim:rgba(255,107,107,.12);
+  --violet:#b98eff; --violet-dim:rgba(185,142,255,.14);
   position:relative; isolation:isolate; box-sizing:border-box;
   background:
     radial-gradient(ellipse 900px 500px at 12% -10%, rgba(77,216,196,.08), transparent 60%),
@@ -128,6 +129,16 @@ ob_start();
     <span id="count" class="rp-count"></span>
   </div>
 
+  <div class="rp-panel" style="margin-bottom:14px;">
+    <div style="font-size:13.5px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+      Custo × Receita
+      <span class="rp-eyebrow" style="margin-left:auto">Linha = ROI diário</span>
+    </div>
+    <div id="chartWrap" style="position:relative; height:260px;">
+      <div class="rp-empty"><span class="rp-spinner"></span></div>
+    </div>
+  </div>
+
   <div class="rp-panel">
     <div id="tbody-wrap" class="rp-table-wrap">
       <div class="rp-empty"><span class="rp-spinner"></span></div>
@@ -135,8 +146,78 @@ ob_start();
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => { loadAccounts(); loadCampaigns(); });
+
+let chartInstance = null;
+function renderChart(rows) {
+  const wrap = document.getElementById('chartWrap');
+  if (!rows.length) {
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    wrap.innerHTML = '<div class="rp-empty">Sem dados nesse período.</div>';
+    return;
+  }
+
+  // Agrega as linhas (já filtradas por conta/campanha/data) por report_date.
+  const byDate = new Map();
+  for (const r of rows) {
+    const d = r.report_date;
+    if (!byDate.has(d)) byDate.set(d, { spend: 0, revenue: 0 });
+    const acc = byDate.get(d);
+    acc.spend   += parseFloat(r.spend_usd || 0);
+    acc.revenue += parseFloat(r.av_revenue_usd || 0);
+  }
+  const dates = Array.from(byDate.keys()).sort();
+
+  if (!wrap.querySelector('canvas')) {
+    wrap.innerHTML = '<canvas id="dailyChart"></canvas>';
+  }
+  const ctx = document.getElementById('dailyChart');
+
+  const labels  = dates.map(d => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
+  const spend   = dates.map(d => byDate.get(d).spend);
+  const revenue = dates.map(d => byDate.get(d).revenue);
+  const roi     = dates.map(d => {
+    const { spend: s, revenue: rv } = byDate.get(d);
+    return s > 0 ? ((rv - s) / s) * 100 : 0;
+  });
+
+  const dim  = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim() || '#8291a3';
+  const hair = getComputedStyle(document.documentElement).getPropertyValue('--hair-soft').trim() || '#1a232c';
+
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar',  label: 'Gasto',      data: spend,   backgroundColor: 'rgba(255,180,84,.55)', borderRadius: 3, yAxisID: 'y' },
+        { type: 'bar',  label: 'Receita AV', data: revenue, backgroundColor: 'rgba(77,216,196,.55)', borderRadius: 3, yAxisID: 'y' },
+        { type: 'line', label: 'ROI', data: roi, borderColor: '#b98eff', backgroundColor: '#b98eff',
+          borderWidth: 2, pointRadius: 2, tension: .3, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: dim, font: { family: 'Inter', size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (item) => item.dataset.yAxisID === 'y1'
+              ? `ROI: ${item.parsed.y.toFixed(1)}%`
+              : `${item.dataset.label}: $${item.parsed.y.toFixed(2)}`,
+          },
+        },
+      },
+      scales: {
+        x:  { grid: { color: hair }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 } } },
+        y:  { position: 'left',  grid: { color: hair }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 }, callback: (v) => '$' + v } },
+        y1: { position: 'right', grid: { display: false }, ticks: { color: dim, font: { family: 'JetBrains Mono', size: 10 }, callback: (v) => v + '%' } },
+      },
+    },
+  });
+}
 
 async function loadAccounts() {
   const sel = document.getElementById('accountFilter');
@@ -173,6 +254,7 @@ async function loadCampaigns() {
   try {
     const data = await apiFetch('/api/campaigns?' + params);
     const rows = data.data || [];
+    renderChart(rows);
     if (!rows.length) {
       wrap.innerHTML = '<div class="rp-empty">Sem resultados para esse filtro.</div>';
       document.getElementById('count').textContent = '';
